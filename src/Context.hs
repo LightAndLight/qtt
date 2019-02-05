@@ -1,42 +1,52 @@
 {-# language DeriveFunctor #-}
+{-# language ExistentialQuantification #-}
 module Context where
 
 import Data.Semiring (times, plus)
 import Syntax
 
-data Entry v a
+data Entry a
   = Entry
-  { _entryVar :: v
-  , _entryUsage :: Usage
+  { _entryUsage :: Usage
   , _entryType :: Term a
   } deriving (Eq, Show, Functor)
 
-newtype Context a = Context { unContext :: [Entry a a] }
+data Ctx v a
+  = Nil
+  | Cons v (Entry a) (Ctx v a)
   deriving (Eq, Show)
 
-scaleC :: Usage -> Context a -> Context a
-scaleC u = Context . go . unContext
+scaleE :: Usage -> Entry a -> Entry a
+scaleE u (Entry u' t) = Entry (times u u') t
+
+zeroE :: Entry a -> Entry a
+zeroE = scaleE Zero
+
+scaleCtx :: Usage -> Ctx v a -> Ctx v a
+scaleCtx u = go
   where
     go ctx =
       case ctx of
-        [] -> []
-        Entry v u' t : cs -> Entry v (times u u') t : go cs
+        Nil -> Nil
+        Cons v c cs -> Cons v (scaleE u c) (go cs)
 
-zeroC :: Context a -> Context a
-zeroC = scaleC Zero
+zeroCtx :: Ctx v a -> Ctx v a
+zeroCtx = scaleCtx Zero
 
-addC :: Eq a => Context a -> Context a -> Context a
-addC (Context a) (Context b) = Context $ go a b
-  where
-    go [] [] = []
-    go (Entry v u t : cs) (Entry v' u' t' : cs')
-      | v == v' && t == t' = Entry v (plus u u') t : go cs cs'
-    go _ _ =  error "addContext: context mismatch"
+addCtx :: (Eq v, Eq a) => Ctx v a -> Ctx v a -> Ctx v a
+addCtx Nil Nil = Nil
+addCtx (Cons v (Entry u t) cs) (Cons v' (Entry u' t') cs')
+  | v == v' && t == t' = Cons v (Entry (plus u u') t) (addCtx cs cs')
+addCtx _ _ =  error "addCtx: Ctx mismatch"
 
-lookupC :: Eq a => a -> Context a -> Maybe (Entry a a)
-lookupC a = go . unContext
-  where
-    go [] = Nothing
-    go (Entry v u t : cs)
-      | v == a = Just $ Entry v u t
-      | otherwise = go cs
+lookupCtx :: Eq v => v -> Ctx v a -> Maybe (Entry a)
+lookupCtx _ Nil = Nothing
+lookupCtx a (Cons v (Entry u t) cs)
+  | v == a = Just $ Entry u t
+  | otherwise = lookupCtx a cs
+
+deleteCtx :: Eq v => v -> Ctx v a -> Ctx v a
+deleteCtx _ Nil = Nil
+deleteCtx a (Cons v e cs)
+  | v == a = cs
+  | otherwise = Cons v e (deleteCtx a cs)
