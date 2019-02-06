@@ -52,14 +52,20 @@ data Term a
   = Var a
   | Ann (Term a) Usage (Term a)
   | Type
+
   | Lam (Scope () Term a)
   | Pi Usage (Term a) (Scope () Term a)
   | App (Term a) (Term a)
+
   | MkTensor (Term a) (Term a)
   | Tensor (Term a) (Scope () Term a)
   | UnpackTensor (Term a) (Scope Bool Term a)
+
+  | MkWith (Term a) (Term a)
+  | With (Term a) (Scope () Term a)
   | Fst (Term a)
   | Snd (Term a)
+
   | Unit
   | MkUnit
   deriving (Functor, Foldable, Traversable)

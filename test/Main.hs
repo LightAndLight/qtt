@@ -143,3 +143,116 @@ main =
              Many
              (arr (Tensor (pure "A") (lift $ pure "A")) $
               pure "A"))
+      it "(\\x => fst x) :w (x : A & A) -o A" $
+        assertRight
+          (check @String @String
+             (\case
+                 "A" -> Right Type
+                 a -> Left a)
+             (\case
+                 "A" -> Right Zero
+                 a -> Left a)
+             (lam "x" $ Fst $ pure "x")
+             Many
+             (limp (With (pure "A") (lift $ pure "A")) $
+              pure "A"))
+      it "(\\x => snd x) :w (A & A) -o A" $
+        assertRight
+          (check @String @String
+             (\case
+                 "A" -> Right Type
+                 a -> Left a)
+             (\case
+                 "A" -> Right Zero
+                 a -> Left a)
+             (lam "x" $ Snd $ pure "x")
+             Many
+             (limp (With (pure "A") (lift $ pure "A")) $
+              pure "A"))
+      it "(\\x => (fst x, snd x)) :w (A & B) -o (A & B)" $
+        assertRight
+          (check @String @String
+             (\case
+                 "A" -> Right Type
+                 "B" -> Right Type
+                 a -> Left a)
+             (\case
+                 "A" -> Right Zero
+                 "B" -> Right Zero
+                 a -> Left a)
+             (lam "x" $ MkWith (Fst $ pure "x") (Snd $ pure "x"))
+             Many
+             (limp (With (pure "A") (lift $ pure "B")) $
+              With (pure "A") (pure "B")))
+      it "(\\x => (x, x)) :w A -o (A & A)" $
+        assertRight
+          (check @String @String
+             (\case
+                 "A" -> Right Type
+                 a -> Left a)
+             (\case
+                 "A" -> Right Zero
+                 a -> Left a)
+             (lam "x" $ MkWith (pure "x") (pure "x"))
+             Many
+             (limp (pure "A") $
+              With (pure "A") (pure "A")))
+      it "(\\x => let (a, b) = x in (a, b)) :w (A ⨂ B) -> (A & B)" $
+        assertRight
+          (check @String @String
+             (\case
+                 "A" -> Right Type
+                 a -> Left a)
+             (\case
+                 "A" -> Right Zero
+                 a -> Left a)
+             (lam "x" $
+              unpackTensor ("a", "b") (pure "x") $
+              MkWith (pure "a") (pure "b"))
+             Many
+             (arr (Tensor (pure "A") (pure "B")) $
+              With (pure "A") (pure "B")))
+      it "(\\x => (fst x, snd x)) :w (A & B) -> (A ⨂ B)" $
+        assertRight
+          (check @String @String
+             (\case
+                 "A" -> Right Type
+                 a -> Left a)
+             (\case
+                 "A" -> Right Zero
+                 a -> Left a)
+             (lam "x" $
+              MkTensor (Fst $ pure "x") (Snd $ pure "x"))
+             Many
+             (arr (With (pure "A") (pure "B")) $
+              Tensor (pure "A") (pure "B")))
+      it "(\\x => let (a, b) = x in (a, b)) :w (A ⨂ B) -o (A & B)" $
+        assertRight
+          (check @String @String
+             (\case
+                 "A" -> Right Type
+                 a -> Left a)
+             (\case
+                 "A" -> Right Zero
+                 a -> Left a)
+             (lam "x" $
+              unpackTensor ("a", "b") (pure "x") $
+              MkWith (pure "a") (pure "b"))
+             Many
+             (limp (Tensor (pure "A") (pure "B")) $
+              With (pure "A") (pure "B")))
+      it "(\\x => (fst x, snd x)) :w (A & B) -o (A ⨂ B)  invalid" $
+        assertLeft
+          (Deep1 $ UsingErased $ B ())
+          (check @String @String
+             (\case
+                 "A" -> Right Type
+                 a -> Left a)
+             (\case
+                 "A" -> Right Zero
+                 a -> Left a)
+             (lam "x" $
+              MkTensor (Fst $ pure "x") (Snd $ pure "x"))
+             Many
+             (limp (With (pure "A") (pure "B")) $
+              Tensor (pure "A") (pure "B")))

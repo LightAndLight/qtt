@@ -111,6 +111,22 @@ prettyTerm = go [0..]
                 , Pretty.text "in"
                 , go supply' (unvar (bool v1 v2) pvar) (fromScope b)
                 ]
+        MkWith a b ->
+          Pretty.parens $
+          go supply pvar a <>
+          Pretty.comma <> Pretty.space <>
+          go supply pvar b
+        With a b ->
+          case supply of
+            [] -> undefined
+            n:supply' ->
+              let
+                varname = Pretty.char 'x' <> Pretty.int n
+              in
+                Pretty.parens $
+                Pretty.hsep [varname, Pretty.char ':', go supply' pvar a] <>
+                Pretty.char '&' <> Pretty.space <>
+                go supply' (unvar (const varname) pvar) (fromScope b)
         Fst a ->
           Pretty.hsep
           [ Pretty.text "fst"

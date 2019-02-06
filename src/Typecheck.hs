@@ -14,13 +14,13 @@ import Syntax
 data TypeError a x
   = NotInScope a
   | UsingErased x
-  | UsingLinear x
   | UnusedLinear x
   | UnerasedFst (Term x)
   | UnerasedSnd (Term x)
   | ExpectedType (Term x)
   | ExpectedPi (Term x)
   | ExpectedTensor (Term x)
+  | ExpectedWith (Term x)
   | ExpectedUnit (Term x)
   | TypeMismatch (Term x) (Term x)
   | Can'tInfer (Term x)
@@ -42,13 +42,15 @@ eval tm =
         a' -> App a' $ eval b
     MkTensor a b -> MkTensor (eval a) (eval b)
     Tensor a b -> Tensor (eval a) (hoistScope eval b)
+    MkWith a b -> MkWith (eval a) (eval b)
+    With a b -> With (eval a) (hoistScope eval b)
     Fst a ->
       case eval a of
-        MkTensor x _ -> x
+        MkWith x _ -> x
         a' -> Fst a'
     Snd a ->
       case eval a of
-        MkTensor _ y -> y
+        MkWith _ y -> y
         a' -> Snd a'
     Unit -> Unit
     MkUnit -> MkUnit
@@ -75,6 +77,24 @@ unsafeCheckConsumed u a usages =
     case (u, u') of
       (One, One) -> Left $ UnusedLinear a
       _ -> pure ()
+
+mergeUsages ::
+  (x -> Either a Usage) ->
+  (x -> Either a Usage) ->
+  (x -> Either a Usage)
+mergeUsages a b x = do
+  uA <- a x
+  uB <- b x
+  case (uA, uB) of
+    (Zero, Zero) -> pure Zero
+    (Zero, One) -> pure Zero
+    (Zero, Many) -> error "mergeUsages: zero as many"
+    (One, Zero) -> pure Zero
+    (One, One) -> pure One
+    (One, Many) -> error "mergeUsages: one as many"
+    (Many, Zero) -> error "mergeUsages: many as zero"
+    (Many, One) -> error "mergeUsages: many as one"
+    (Many, Many) -> pure Many
 
 check ::
   (Eq x, Eq a) =>
@@ -135,6 +155,49 @@ check ctx usages tm u ty_ =
           usages' <- check ctx usages a u s
           check ctx usages' b u (instantiate1 (Ann a u s) t)
         _ -> Left $ ExpectedTensor ty
+    UnpackTensor a b -> do
+      (usages', Entry aUsage aTy) <- infer ctx usages a u
+      case aTy of
+        Tensor s t -> do
+          usages'' <-
+            first Deep2 $
+            check
+              (unvar
+                 (bool
+                    (Right $ F <$> s)
+                    (Right $ fromScope t >>= Var . unvar (const $ B False) F))
+                 (fmap (fmap F) . ctx))
+              (unvar
+                 (bool (Right aUsage) (Right aUsage))
+                 usages')
+              (fromScope b)
+              u
+              (F <$> ty)
+          first Deep2 $ unsafeCheckConsumed aUsage (B False) usages''
+          first Deep2 $ unsafeCheckConsumed aUsage (B True) usages''
+          pure $ usages'' . F
+        _ -> Left $ ExpectedTensor aTy
+    With a b ->
+      case ty of
+        Type -> do
+          _ <- check ctx ((Zero <$) . usages) a Zero Type
+          _ <-
+            first Deep1 $
+            check
+              (unvar (const $ Right $ F <$> a) (fmap (fmap F) . ctx))
+              (unvar (const $ Right Zero) ((Zero <$) . usages))
+              (fromScope b)
+              Zero
+              Type
+          pure usages
+        _ -> Left $ ExpectedType ty
+    MkWith a b ->
+      case ty of
+        With s t -> do
+          usagesA <- check ctx usages a u s
+          usagesB <- check ctx usages b u (instantiate1 (Ann a u s) t)
+          pure $ mergeUsages usagesA usagesB
+        _ -> Left $ ExpectedWith ty
     Unit ->
       case ty of
         Type -> pure usages
@@ -172,8 +235,8 @@ infer ctx usages tm u =
         (Many, Many) -> pure (usages, Entry u' aTy)
     Ann a u' b -> do
       _ <- check ctx ((Zero <$) . usages) b Zero Type
-      _ <- check ctx usages a u' b
-      pure (usages, Entry u' b)
+      usages' <- check ctx usages a u' b
+      pure (usages', Entry u' b)
     App a b -> do
       (usages', Entry aUsage aTy) <- infer ctx usages a u
       case aTy of
@@ -182,44 +245,14 @@ infer ctx usages tm u =
           usages'' <- check ctx usages' b u'' s
           pure (usages'', Entry aUsage $ instantiate1 (Ann b u'' s) t)
         _ -> Left $ ExpectedPi aTy
-    Fst a ->
-      case u of
-        Zero -> do
-          (_, Entry aUsage aTy) <- infer ctx usages a u
-          case aTy of
-            Tensor s _ -> pure (usages, Entry aUsage s)
-            _ -> Left $ ExpectedTensor aTy
-        _ -> Left $ UnerasedFst tm
-    Snd a ->
-      case u of
-        Zero -> do
-          (_, Entry aUsage aTy) <- infer ctx usages a u
-          case aTy of
-            Tensor _ t -> pure (usages, Entry aUsage $ instantiate1 (Fst a) t)
-            _ -> Left $ ExpectedTensor aTy
-        _ -> Left $ UnerasedSnd tm
-    UnpackTensor a b -> do
+    Fst a -> do
       (usages', Entry aUsage aTy) <- infer ctx usages a u
       case aTy of
-        Tensor s t -> do
-          (usages'', Entry bUsage bTy) <-
-            first Deep2 $
-            infer
-              (unvar
-                 (bool
-                    (Right $ F <$> s)
-                    (Right $ fromScope t >>= Var . unvar (const $ B False) F))
-                 (fmap (fmap F) . ctx))
-              (unvar
-                 (bool (Right aUsage) (Right aUsage))
-                 usages')
-              (fromScope b)
-              u
-          first Deep2 $ unsafeCheckConsumed aUsage (B False) usages''
-          first Deep2 $ unsafeCheckConsumed aUsage (B True) usages''
-          pure
-            ( usages'' . F
-            , Entry bUsage $ bTy >>= unvar (bool (Fst a) (Snd a)) pure
-            )
-        _ -> Left $ ExpectedTensor aTy
+        With s _ -> pure (usages', Entry aUsage s)
+        _ -> Left $ ExpectedWith aTy
+    Snd a -> do
+      (usages', Entry aUsage aTy) <- infer ctx usages a u
+      case aTy of
+        With _ t -> pure (usages', Entry aUsage (instantiate1 (Fst a) t))
+        _ -> Left $ ExpectedWith aTy
     _ -> Left $ Can'tInfer tm
