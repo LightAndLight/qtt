@@ -34,46 +34,46 @@ main =
         check @String @String Left Left
           (lam "A" $ lam "x" $ pure "x")
           Zero
-          (pi ("A", Zero, Type) $ pi ("x", One, pure "A") $ pure "A")
+          (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
       it "(\\A => \\x => x) :1 (A :0 Type) -> (x :1 A) -> A" $
         assertRight $
         check @String @String Left Left
           (lam "A" $ lam "x" $ pure "x")
           One
-          (pi ("A", Zero, Type) $ pi ("x", One, pure "A") $ pure "A")
+          (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
       it "(\\A => \\x => x) :w (A :0 Type) -> (x :1 A) -> A" $
         assertRight $
         check @String @String Left Left
           (lam "A" $ lam "x" $ pure "x")
           Many
-          (pi ("A", Zero, Type) $ pi ("x", One, pure "A") $ pure "A")
+          (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
       it "(\\A => \\x => x) :0 (A :0 Type) -> (x :0 A) -> A" $
         assertRight $
         check @String @String Left Left
           (lam "A" $ lam "x" $ pure "x")
           Zero
-          (pi ("A", Zero, Type) $ pi ("x", Zero, pure "A") $ pure "A")
+          (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
       it "(\\A => \\x => x) :1 (A :0 Type) -> (x :0 A) -> A   invalid" $
         assertLeft (Deep1 $ Deep1 $ UsingErased $ B ()) $
         check @String @String Left Left
           (lam "A" $ lam "x" $ pure "x")
           One
-          (pi ("A", Zero, Type) $ pi ("x", Zero, pure "A") $ pure "A")
+          (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
       it "(\\A => \\x => x) :w (A :0 Type) -> (x :0 A) -> A   invalid" $
         assertLeft (Deep1 $ Deep1 $ UsingErased $ B ()) $
         check @String @String Left Left
           (lam "A" $ lam "x" $ pure "x")
           Many
-          (pi ("A", Zero, Type) $ pi ("x", Zero, pure "A") $ pure "A")
+          (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
       it "(\\A => \\x => \\y => x) :w (A :0 Type) -> (x :1 A) -> (y :w A) -> A   invalid" $
         assertLeft
           (Deep1 . Deep1 . UnusedLinear $ B ())
           (check @String @String Left Left
             (lam "A" $ lam "x" $ lam "y" $ pure "y")
             Many
-            (pi ("A", Zero, Type) $
-             pi ("x", One, pure "A") $
-             pi ("y", Many, pure "A") $
+            (forall_ ("A", Type) $
+             lpi ("x", pure "A") $
+             pi ("y", pure "A") $
              pure "A"))
       it "(\\A => \\x => x) :w (A :1 Type) -> (x :1 A) -> A   invalid" $
         assertLeft
@@ -81,8 +81,8 @@ main =
           (check @String @String Left Left
             (lam "A" $ lam "x" $ pure "x")
             Many
-            (pi ("A", One, Type) $
-             pi ("x", One, pure "A") $
+            (lpi ("A", Type) $
+             lpi ("x", pure "A") $
              pure "A"))
       it "(\\A => \\x => (x, x)) :w (A :0 Type) -> (x :1 A) -> (y : A ⨂ A)   invalid" $
         assertLeft
@@ -90,16 +90,16 @@ main =
           (check @String @String Left Left
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             Many
-            (pi ("A", Zero, Type) $
-             pi ("x", One, pure "A") $
+            (forall_ ("A", Type) $
+             lpi ("x", pure "A") $
              Tensor (pure "A") (lift $ pure "A")))
       it "(\\A => \\x => (x, x)) :w (A :0 Type) -> (x :w A) -> (y : A ⨂ A)" $
         assertRight
           (check @String @String Left Left
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             Many
-            (pi ("A", Zero, Type) $
-             pi ("x", Many, pure "A") $
+            (forall_ ("A", Type) $
+             pi ("x", pure "A") $
              Tensor (pure "A") (lift $ pure "A")))
       it "(\\x => let (a, b) = x in a b) :w (x : A -> B ⨂ A) -o B" $
         assertRight
@@ -256,3 +256,40 @@ main =
              Many
              (limp (With (pure "A") (pure "B")) $
               Tensor (pure "A") (pure "B")))
+      it "(\\x => \\f => f x) :w ∀(a : A), (A -> B) -> B   invalid" $
+        assertLeft
+          (Deep1 $ Deep1 $ UsingErased $ F $ B ())
+          (check @String @String
+             (\case
+                 "A" -> Right Type
+                 "B" -> Right Type
+                 a -> Left a)
+             (\case
+                 "A" -> Right Zero
+                 "B" -> Right Zero
+                 a -> Left a)
+             (lam "x" $
+              lam "f" $
+              App (pure "f") (pure "x"))
+             Many
+             (forall_ ("a", pure "A") $
+              arr (arr (pure "A") (pure "B")) $
+              pure "B"))
+      it "(\\x => \\f => f x) :w A -> (b : ∀(a : A) -> B) -> B" $
+        assertRight
+          (check @String @String
+             (\case
+                 "A" -> Right Type
+                 "B" -> Right Type
+                 a -> Left a)
+             (\case
+                 "A" -> Right Zero
+                 "B" -> Right Zero
+                 a -> Left a)
+             (lam "x" $
+              lam "f" $
+              App (pure "f") (pure "x"))
+             Many
+             (arr (pure "A") $
+              pi ("b", forall_ ("a", pure "A") (pure "B")) $
+              pure "B"))

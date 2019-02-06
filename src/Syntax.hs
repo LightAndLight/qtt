@@ -76,8 +76,14 @@ deriveShow1 ''Term
 lam :: Eq a => a -> Term a -> Term a
 lam a = Lam . abstract1 a
 
-pi :: Eq a => (a, Usage, Ty a) -> Term a -> Term a
-pi (a, u, ty) = Pi u ty . abstract1 a
+pi :: Eq a => (a, Ty a) -> Term a -> Term a
+pi (a, ty) = Pi Many ty . abstract1 a
+
+lpi :: Eq a => (a, Ty a) -> Term a -> Term a
+lpi (a, ty) = Pi One ty . abstract1 a
+
+forall_ :: Eq a => (a, Ty a) -> Term a -> Term a
+forall_ (a, ty) = Pi Zero ty . abstract1 a
 
 arr :: Term a -> Term a -> Term a
 arr a b = Pi Many a $ lift b
