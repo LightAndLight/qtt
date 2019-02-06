@@ -1,8 +1,11 @@
 {-# language DeriveFunctor #-}
 {-# language ExistentialQuantification #-}
+{-# language TemplateHaskell #-}
 module Context where
 
+import Control.Lens.TH (makeLenses)
 import Data.Semiring (times, plus)
+
 import Syntax
 
 data Entry a
@@ -10,6 +13,7 @@ data Entry a
   { _entryUsage :: Usage
   , _entryType :: Term a
   } deriving (Eq, Show, Functor)
+makeLenses ''Entry
 
 data Ctx v a
   = Nil

@@ -3,17 +3,19 @@ module Typecheck where
 
 import Bound.Scope (fromScope, instantiate1, instantiate, hoistScope)
 import Bound.Var (Var(..), unvar)
+import Control.Lens.Setter (over, mapped)
 import Data.Bifunctor (first)
 import Data.Bool (bool)
 import Data.Semiring (times)
 
+import Context
 import Syntax
 
 data TypeError a x
   = NotInScope a
   | UsingErased x
   | UsingLinear x
-  | UnusedLinear (Term x)
+  | UnusedLinear x
   | UnerasedFst (Term x)
   | UnerasedSnd (Term x)
   | ExpectedType (Term x)
@@ -39,7 +41,7 @@ eval tm =
         Lam s -> eval $ instantiate1 b s
         a' -> App a' $ eval b
     Pair a b -> Pair (eval a) (eval b)
-    Sigma u a b -> Sigma u (eval a) (hoistScope eval b)
+    Sigma a b -> Sigma (eval a) (hoistScope eval b)
     Fst a ->
       case eval a of
         Pair x _ -> x
@@ -55,6 +57,25 @@ eval tm =
         Pair x y -> eval $ instantiate (bool x y) b
         a' -> UnpackSigma a' $ hoistScope eval b
 
+unsafeGetUsage :: a -> (a -> Either b c) -> c
+unsafeGetUsage a usages =
+  case usages a of
+    Left{} -> error "check: bound variable's usage was not found"
+    Right u -> u
+
+unsafeCheckConsumed ::
+  Usage -> -- ^ Expected usage
+  x -> -- ^ Variable
+  (x -> Either b Usage) -> -- ^ Usages
+  Either (TypeError a x) ()
+unsafeCheckConsumed u a usages =
+  let
+    u' = unsafeGetUsage a usages
+  in
+    case (u, u') of
+      (One, One) -> Left $ UnusedLinear a
+      _ -> pure ()
+
 check ::
   (Eq x, Eq a) =>
   (x -> Either a (Ty x)) ->
@@ -63,11 +84,8 @@ check ::
   Usage ->
   Ty x ->
   Either (TypeError a x) (x -> Either a Usage)
-check ctx usages tm u_ ty_ =
-  let
-    u = weaken u_
-    ty = eval ty_ -- pre-compute
-  in
+check ctx usages tm u ty_ =
+  let ty = eval ty_ in -- pre-compute
   case tm of
     Pi _ a b ->
       case ty of
@@ -94,14 +112,10 @@ check ctx usages tm u_ ty_ =
               (fromScope a)
               u
               (fromScope t)
-          case usages' $ B () of
-            Left{} -> error "check: bound variable's usage was not found"
-            Right u'' ->
-              case (u', u'') of
-                (One, One) -> Left $ UnusedLinear tm
-                _ -> pure $ usages' . F
+          first Deep1 $ unsafeCheckConsumed u' (B ()) usages'
+          pure $ usages' . F
         _ -> Left $ ExpectedPi ty
-    Sigma _ a b ->
+    Sigma a b ->
       case ty of
         Type -> do
           _ <- check ctx ((Zero <$) . usages) a Zero Type
@@ -117,8 +131,8 @@ check ctx usages tm u_ ty_ =
         _ -> Left $ ExpectedType ty
     Pair a b ->
       case ty of
-        Sigma u' s t -> do
-          usages' <- check ctx usages a (times u' u) s
+        Sigma s t -> do
+          usages' <- check ctx usages a u s
           check ctx usages' b u (instantiate1 (Ann a u s) t)
         _ -> Left $ ExpectedSigma ty
     Unit ->
@@ -130,7 +144,7 @@ check ctx usages tm u_ ty_ =
         Unit -> pure usages
         _ -> Left $ ExpectedUnit ty
     _ -> do
-      (usages', tmTy) <- infer ctx usages tm u
+      (usages', Entry _ tmTy) <- infer ctx usages tm u
       if tmTy == ty
         then pure usages'
         else Left $ TypeMismatch ty tmTy
@@ -141,55 +155,54 @@ infer ::
   (x -> Either a Usage) ->
   Term x ->
   Usage ->
-  Either (TypeError a x) (x -> Either a Usage, Ty x)
-infer ctx usages tm u_ =
-  let u = weaken u_ in
-  fmap (fmap eval) $ -- post compute
+  Either (TypeError a x) (x -> Either a Usage, Entry x)
+infer ctx usages tm u =
+  over (mapped.mapped.entryType) eval $ -- post compute
   case tm of
     Var a -> do
       aTy <- first NotInScope $ ctx a
       u' <- first NotInScope $ usages a
       case (u, u') of
-        (Zero, _) -> pure (usages, aTy)
+        (Zero, _) -> pure (usages, Entry u' aTy)
         (One, Zero) -> Left $ UsingErased a
-        (One, One) -> pure (\x -> if x == a then Right Zero else usages x, aTy)
-        (One, Many) -> pure (usages, aTy)
+        (One, One) -> pure (\x -> if x == a then Right Zero else usages x, Entry u' aTy)
+        (One, Many) -> pure (usages, Entry u' aTy)
         (Many, Zero) -> Left $ UsingErased a
-        (Many, One) -> Left $ UsingLinear a
-        (Many, Many) -> pure (usages, aTy)
+        (Many, One) -> pure (\x -> if x == a then Right Zero else usages x, Entry u' aTy)
+        (Many, Many) -> pure (usages, Entry u' aTy)
     Ann a u' b -> do
       _ <- check ctx ((Zero <$) . usages) b Zero Type
       _ <- check ctx usages a u' b
-      pure (usages, b)
+      pure (usages, Entry u' b)
     App a b -> do
-      (usages', aTy) <- infer ctx usages a u
+      (usages', Entry aUsage aTy) <- infer ctx usages a u
       case aTy of
         Pi u' s t -> do
-          let u'' = times u' u
+          let u'' = times u' aUsage
           usages'' <- check ctx usages' b u'' s
-          pure (usages'', instantiate1 (Ann b u'' s) t)
+          pure (usages'', Entry aUsage $ instantiate1 (Ann b u'' s) t)
         _ -> Left $ ExpectedPi aTy
     Fst a ->
       case u of
         Zero -> do
-          (_, aTy) <- infer ctx usages a u
+          (_, Entry aUsage aTy) <- infer ctx usages a u
           case aTy of
-            Sigma _ s _ -> pure (usages, s)
+            Sigma s _ -> pure (usages, Entry aUsage s)
             _ -> Left $ ExpectedSigma aTy
         _ -> Left $ UnerasedFst tm
     Snd a ->
       case u of
         Zero -> do
-          (_, aTy) <- infer ctx usages a u
+          (_, Entry aUsage aTy) <- infer ctx usages a u
           case aTy of
-            Sigma _ _ t -> pure (usages, instantiate1 (Fst a) t)
+            Sigma _ t -> pure (usages, Entry aUsage $ instantiate1 (Fst a) t)
             _ -> Left $ ExpectedSigma aTy
         _ -> Left $ UnerasedSnd tm
     UnpackSigma a b -> do
-      (usages', aTy) <- infer ctx usages a u
+      (usages', Entry aUsage aTy) <- infer ctx usages a u
       case aTy of
-        Sigma u' s t -> do
-          (usages'', bTy) <-
+        Sigma s t -> do
+          (usages'', Entry bUsage bTy) <-
             first Deep2 $
             infer
               (unvar
@@ -198,10 +211,15 @@ infer ctx usages tm u_ =
                     (Right $ fromScope t >>= Var . unvar (const $ B False) F))
                  (fmap (fmap F) . ctx))
               (unvar
-                 (bool (Right $ times u' u) (Right u))
+                 (bool (Right aUsage) (Right aUsage))
                  usages')
               (fromScope b)
               u
-          pure (usages'' . F, bTy >>= unvar (bool (Fst a) (Snd a)) pure)
+          first Deep2 $ unsafeCheckConsumed aUsage (B False) usages''
+          first Deep2 $ unsafeCheckConsumed aUsage (B True) usages''
+          pure
+            ( usages'' . F
+            , Entry bUsage $ bTy >>= unvar (bool (Fst a) (Snd a)) pure
+            )
         _ -> Left $ ExpectedSigma aTy
     _ -> Left $ Can'tInfer tm

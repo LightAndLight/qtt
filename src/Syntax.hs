@@ -3,8 +3,9 @@
 {-# language TemplateHaskell #-}
 module Syntax where
 
-import Bound.Scope (Scope, abstract1)
+import Bound.Scope (Scope, abstract1, abstract)
 import Bound.TH (makeBound)
+import Control.Monad.Trans.Class (lift)
 import Data.Deriving (deriveEq1, deriveShow1)
 import Data.Semiring (Semiring(..))
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
@@ -19,13 +20,8 @@ instance Pretty Usage where
   pretty One = Pretty.char '1'
   pretty Many = Pretty.char 'w'
 
-weaken :: Usage -> Usage
-weaken Many = One
-weaken a = a
-
 instance Semiring Usage where
   zero = Zero
-  one = One
 
   plus Zero m = m
   plus One Zero = One
@@ -33,11 +29,23 @@ instance Semiring Usage where
   plus One Many = Many
   plus Many _ = Many
 
+{-   maybe the semiring is wrong?
+  one = One
+
   times Zero _ = Zero
   times One m = m
   times Many Zero = Zero
   times Many One = Many
   times Many Many = Many
+-}
+
+  one = Many
+
+  times Zero _ = Zero
+  times One Zero = Zero
+  times One One = One
+  times One Many = One
+  times Many m = m
 
 type Ty = Term
 data Term a
@@ -48,7 +56,7 @@ data Term a
   | Pi Usage (Term a) (Scope () Term a)
   | App (Term a) (Term a)
   | Pair (Term a) (Term a)
-  | Sigma Usage (Term a) (Scope () Term a)
+  | Sigma (Term a) (Scope () Term a)
   | UnpackSigma (Term a) (Scope Bool Term a)
   | Fst (Term a)
   | Snd (Term a)
@@ -64,6 +72,19 @@ lam a = Lam . abstract1 a
 
 pi :: Eq a => (a, Usage, Ty a) -> Term a -> Term a
 pi (a, u, ty) = Pi u ty . abstract1 a
+
+arr :: Term a -> Term a -> Term a
+arr a b = Pi Many a $ lift b
+
+limp :: Term a -> Term a -> Term a
+limp a b = Pi One a $ lift b
+
+elimPair :: Eq a => (a, a) -> Term a -> Term a -> Term a
+elimPair (x, y) m n =
+  UnpackSigma m $
+  abstract
+    (\z -> if z == x then Just False else if z == y then Just True else Nothing)
+    n
 
 deriving instance Eq a => Eq (Term a)
 deriving instance Show a => Show (Term a)

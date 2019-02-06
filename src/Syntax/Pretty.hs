@@ -80,7 +80,7 @@ prettyTerm = go [0..]
           go supply pvar a <>
           Pretty.comma <> Pretty.space <>
           go supply pvar b
-        Sigma a b c ->
+        Sigma a b ->
           case supply of
             [] -> undefined
             n:supply' ->
@@ -88,9 +88,9 @@ prettyTerm = go [0..]
                 varname = Pretty.char 'x' <> Pretty.int n
               in
                 Pretty.parens $
-                Pretty.hsep [varname, Pretty.char ':' <> pretty a, go supply' pvar b] <>
-                Pretty.comma <> Pretty.space <>
-                go supply' (unvar (const varname) pvar) (fromScope c)
+                Pretty.hsep [varname, Pretty.char ':', go supply' pvar a] <>
+                Pretty.char '*' <> Pretty.space <>
+                go supply' (unvar (const varname) pvar) (fromScope b)
         UnpackSigma a b ->
           case supply of
             [] -> undefined

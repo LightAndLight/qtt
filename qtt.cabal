@@ -21,11 +21,13 @@ library
                      , Context
                      , Typecheck
   build-depends:       base ^>=4.12.0.0
+                     , ansi-wl-pprint
                      , bound
                      , deriving-compat
-                     , semirings
+                     , lens
                      , mtl
-                     , ansi-wl-pprint
+                     , semirings
+                     , transformers >= 0.5
   ghc-options:         -Wall -Werror
   hs-source-dirs:      src
   default-language:    Haskell2010
@@ -36,6 +38,7 @@ test-suite qtt-tests
                      , qtt
                      , bound
                      , hspec
+                     , transformers >= 0.5
   main-is:             Main.hs
   ghc-options:         -Wall -Werror
   hs-source-dirs:      test
