@@ -55,9 +55,9 @@ data Term a
   | Lam (Scope () Term a)
   | Pi Usage (Term a) (Scope () Term a)
   | App (Term a) (Term a)
-  | Pair (Term a) (Term a)
-  | Sigma (Term a) (Scope () Term a)
-  | UnpackSigma (Term a) (Scope Bool Term a)
+  | MkTensor (Term a) (Term a)
+  | Tensor (Term a) (Scope () Term a)
+  | UnpackTensor (Term a) (Scope Bool Term a)
   | Fst (Term a)
   | Snd (Term a)
   | Unit
@@ -79,9 +79,9 @@ arr a b = Pi Many a $ lift b
 limp :: Term a -> Term a -> Term a
 limp a b = Pi One a $ lift b
 
-elimPair :: Eq a => (a, a) -> Term a -> Term a -> Term a
-elimPair (x, y) m n =
-  UnpackSigma m $
+unpackTensor :: Eq a => (a, a) -> Term a -> Term a -> Term a
+unpackTensor (x, y) m n =
+  UnpackTensor m $
   abstract
     (\z -> if z == x then Just False else if z == y then Just True else Nothing)
     n

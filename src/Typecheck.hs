@@ -20,7 +20,7 @@ data TypeError a x
   | UnerasedSnd (Term x)
   | ExpectedType (Term x)
   | ExpectedPi (Term x)
-  | ExpectedSigma (Term x)
+  | ExpectedTensor (Term x)
   | ExpectedUnit (Term x)
   | TypeMismatch (Term x) (Term x)
   | Can'tInfer (Term x)
@@ -40,22 +40,22 @@ eval tm =
       case eval a of
         Lam s -> eval $ instantiate1 b s
         a' -> App a' $ eval b
-    Pair a b -> Pair (eval a) (eval b)
-    Sigma a b -> Sigma (eval a) (hoistScope eval b)
+    MkTensor a b -> MkTensor (eval a) (eval b)
+    Tensor a b -> Tensor (eval a) (hoistScope eval b)
     Fst a ->
       case eval a of
-        Pair x _ -> x
+        MkTensor x _ -> x
         a' -> Fst a'
     Snd a ->
       case eval a of
-        Pair _ y -> y
+        MkTensor _ y -> y
         a' -> Snd a'
     Unit -> Unit
     MkUnit -> MkUnit
-    UnpackSigma a b ->
+    UnpackTensor a b ->
       case eval a of
-        Pair x y -> eval $ instantiate (bool x y) b
-        a' -> UnpackSigma a' $ hoistScope eval b
+        MkTensor x y -> eval $ instantiate (bool x y) b
+        a' -> UnpackTensor a' $ hoistScope eval b
 
 unsafeGetUsage :: a -> (a -> Either b c) -> c
 unsafeGetUsage a usages =
@@ -115,7 +115,7 @@ check ctx usages tm u ty_ =
           first Deep1 $ unsafeCheckConsumed u' (B ()) usages'
           pure $ usages' . F
         _ -> Left $ ExpectedPi ty
-    Sigma a b ->
+    Tensor a b ->
       case ty of
         Type -> do
           _ <- check ctx ((Zero <$) . usages) a Zero Type
@@ -129,12 +129,12 @@ check ctx usages tm u ty_ =
               Type
           pure usages
         _ -> Left $ ExpectedType ty
-    Pair a b ->
+    MkTensor a b ->
       case ty of
-        Sigma s t -> do
+        Tensor s t -> do
           usages' <- check ctx usages a u s
           check ctx usages' b u (instantiate1 (Ann a u s) t)
-        _ -> Left $ ExpectedSigma ty
+        _ -> Left $ ExpectedTensor ty
     Unit ->
       case ty of
         Type -> pure usages
@@ -187,21 +187,21 @@ infer ctx usages tm u =
         Zero -> do
           (_, Entry aUsage aTy) <- infer ctx usages a u
           case aTy of
-            Sigma s _ -> pure (usages, Entry aUsage s)
-            _ -> Left $ ExpectedSigma aTy
+            Tensor s _ -> pure (usages, Entry aUsage s)
+            _ -> Left $ ExpectedTensor aTy
         _ -> Left $ UnerasedFst tm
     Snd a ->
       case u of
         Zero -> do
           (_, Entry aUsage aTy) <- infer ctx usages a u
           case aTy of
-            Sigma _ t -> pure (usages, Entry aUsage $ instantiate1 (Fst a) t)
-            _ -> Left $ ExpectedSigma aTy
+            Tensor _ t -> pure (usages, Entry aUsage $ instantiate1 (Fst a) t)
+            _ -> Left $ ExpectedTensor aTy
         _ -> Left $ UnerasedSnd tm
-    UnpackSigma a b -> do
+    UnpackTensor a b -> do
       (usages', Entry aUsage aTy) <- infer ctx usages a u
       case aTy of
-        Sigma s t -> do
+        Tensor s t -> do
           (usages'', Entry bUsage bTy) <-
             first Deep2 $
             infer
@@ -221,5 +221,5 @@ infer ctx usages tm u =
             ( usages'' . F
             , Entry bUsage $ bTy >>= unvar (bool (Fst a) (Snd a)) pure
             )
-        _ -> Left $ ExpectedSigma aTy
+        _ -> Left $ ExpectedTensor aTy
     _ -> Left $ Can'tInfer tm

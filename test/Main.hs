@@ -84,24 +84,24 @@ main =
             (pi ("A", One, Type) $
              pi ("x", One, pure "A") $
              pure "A"))
-      it "(\\A => \\x => (x, x)) :w (A :0 Type) -> (x :1 A) -> (y : A * A)   invalid" $
+      it "(\\A => \\x => (x, x)) :w (A :0 Type) -> (x :1 A) -> (y : A ⨂ A)   invalid" $
         assertLeft
           (Deep1 $ Deep1 $ UsingErased $ B ())
           (check @String @String Left Left
-            (lam "A" $ lam "x" $ Pair (pure "x") (pure "x"))
+            (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             Many
             (pi ("A", Zero, Type) $
              pi ("x", One, pure "A") $
-             Sigma (pure "A") (lift $ pure "A")))
-      it "(\\A => \\x => (x, x)) :w (A :0 Type) -> (x :w A) -> (y : A * A)" $
+             Tensor (pure "A") (lift $ pure "A")))
+      it "(\\A => \\x => (x, x)) :w (A :0 Type) -> (x :w A) -> (y : A ⨂ A)" $
         assertRight
           (check @String @String Left Left
-            (lam "A" $ lam "x" $ Pair (pure "x") (pure "x"))
+            (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             Many
             (pi ("A", Zero, Type) $
              pi ("x", Many, pure "A") $
-             Sigma (pure "A") (lift $ pure "A")))
-      it "(\\x => let (a, b) = x in a b) :w (x : A -> B * A) -o B" $
+             Tensor (pure "A") (lift $ pure "A")))
+      it "(\\x => let (a, b) = x in a b) :w (x : A -> B ⨂ A) -o B" $
         assertRight
           (check @String @String
              (\case
@@ -112,11 +112,11 @@ main =
                  "A" -> Right Zero
                  "B" -> Right Zero
                  a -> Left a)
-             (lam "x" $ elimPair ("a", "b") (pure "x") (App (pure "a") (pure "b")))
+             (lam "x" $ unpackTensor ("a", "b") (pure "x") (App (pure "a") (pure "b")))
              Many
-             (limp (Sigma (pure "A" `arr` pure "B") (lift $ pure "A")) $
+             (limp (Tensor (pure "A" `arr` pure "B") (lift $ pure "A")) $
               pure "B"))
-      it "(\\x => let (a, b) = x in a) :w (x : A * A) -o A   invalid" $
+      it "(\\x => let (a, b) = x in a) :w (x : A ⨂ A) -o A   invalid" $
         assertLeft
           (Deep1 $ Deep2 $ UnusedLinear $ B True)
           (check @String @String
@@ -126,11 +126,11 @@ main =
              (\case
                  "A" -> Right Zero
                  a -> Left a)
-             (lam "x" $ elimPair ("a", "b") (pure "x") (pure "a"))
+             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "a"))
              Many
-             (limp (Sigma (pure "A") (lift $ pure "A")) $
+             (limp (Tensor (pure "A") (lift $ pure "A")) $
               pure "A"))
-      it "(\\x => let (a, b) = x in a) :w (x : A * A) -> A" $
+      it "(\\x => let (a, b) = x in a) :w (x : A ⨂ A) -> A" $
         assertRight
           (check @String @String
              (\case
@@ -139,7 +139,7 @@ main =
              (\case
                  "A" -> Right Zero
                  a -> Left a)
-             (lam "x" $ elimPair ("a", "b") (pure "x") (pure "a"))
+             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "a"))
              Many
-             (arr (Sigma (pure "A") (lift $ pure "A")) $
+             (arr (Tensor (pure "A") (lift $ pure "A")) $
               pure "A"))

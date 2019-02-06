@@ -21,7 +21,7 @@ prettyTerm = go [0..]
           [ (case a of
                Lam{} -> Pretty.parens
                Pi{} -> Pretty.parens
-               UnpackSigma{} -> Pretty.parens
+               UnpackTensor{} -> Pretty.parens
                _ -> id)
             (go supply pvar a)
           , Pretty.char ':' <> pretty b
@@ -62,25 +62,25 @@ prettyTerm = go [0..]
           [ (case a of
                Lam{} -> Pretty.parens
                Pi{} -> Pretty.parens
-               UnpackSigma{} -> Pretty.parens
+               UnpackTensor{} -> Pretty.parens
                _ -> id)
             (go supply pvar a)
           , (case b of
                Lam{} -> Pretty.parens
                Pi{} -> Pretty.parens
-               UnpackSigma{} -> Pretty.parens
+               UnpackTensor{} -> Pretty.parens
                App{} -> Pretty.parens
                Fst{} -> Pretty.parens
                Snd{} -> Pretty.parens
                _ -> id)
             (go supply pvar b)
           ]
-        Pair a b ->
+        MkTensor a b ->
           Pretty.parens $
           go supply pvar a <>
           Pretty.comma <> Pretty.space <>
           go supply pvar b
-        Sigma a b ->
+        Tensor a b ->
           case supply of
             [] -> undefined
             n:supply' ->
@@ -89,9 +89,9 @@ prettyTerm = go [0..]
               in
                 Pretty.parens $
                 Pretty.hsep [varname, Pretty.char ':', go supply' pvar a] <>
-                Pretty.char '*' <> Pretty.space <>
+                Pretty.char '⨂' <> Pretty.space <>
                 go supply' (unvar (const varname) pvar) (fromScope b)
-        UnpackSigma a b ->
+        UnpackTensor a b ->
           case supply of
             [] -> undefined
             [_] -> undefined
@@ -105,7 +105,7 @@ prettyTerm = go [0..]
                 , Pretty.parens $ v1 <> Pretty.comma <> Pretty.space <> v2
                 , Pretty.char '='
                 , (case a of
-                     UnpackSigma{} -> Pretty.parens
+                     UnpackTensor{} -> Pretty.parens
                      _ -> id)
                   (go supply' pvar a)
                 , Pretty.text "in"
