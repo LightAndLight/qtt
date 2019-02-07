@@ -19,6 +19,7 @@ library
   exposed-modules:     Syntax
                      , Syntax.Pretty
                      , Context
+                     , Inductive
                      , Typecheck
   build-depends:       base ^>=4.12.0.0
                      , ansi-wl-pprint

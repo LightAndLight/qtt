@@ -96,6 +96,15 @@ mergeUsages a b x = do
     (Many, One) -> error "mergeUsages: many as one"
     (Many, Many) -> pure Many
 
+checkZero ::
+  (Eq x, Eq a) =>
+  (x -> Either a (Ty x)) ->
+  (x -> Either a Usage) ->
+  Term x ->
+  Ty x ->
+  Either (TypeError a x) (x -> Either a Usage)
+checkZero ctx usages tm = check ctx ((Zero <$) . usages) tm Zero . eval
+
 check ::
   (Eq x, Eq a) =>
   (x -> Either a (Ty x)) ->
@@ -110,7 +119,7 @@ check ctx usages tm u ty_ =
     Pi _ a b ->
       case ty of
         Type -> do
-          _ <- check ctx ((Zero <$) . usages) a Zero Type
+          _ <- checkZero ctx usages a Type
           _ <-
             first Deep1 $
             check
@@ -138,7 +147,7 @@ check ctx usages tm u ty_ =
     Tensor a b ->
       case ty of
         Type -> do
-          _ <- check ctx ((Zero <$) . usages) a Zero Type
+          _ <- checkZero ctx usages a Type
           _ <-
             first Deep1 $
             check
@@ -180,7 +189,7 @@ check ctx usages tm u ty_ =
     With a b ->
       case ty of
         Type -> do
-          _ <- check ctx ((Zero <$) . usages) a Zero Type
+          _ <- checkZero ctx usages a Type
           _ <-
             first Deep1 $
             check

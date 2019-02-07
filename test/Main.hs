@@ -293,3 +293,29 @@ main =
              (arr (pure "A") $
               pi ("b", forall_ ("a", pure "A") (pure "B")) $
               pure "B"))
+      it "List : Type -> Type, Nil : ∀(a : Type) -> List a |- Nil A :w List A" $
+        assertRight
+          (check @String @String
+             (\case
+                 "List" -> Right $ arr Type Type
+                 "Nil" ->
+                   Right $
+                   forall_ ("a", Type) $
+                   App (pure "List") (pure "a")
+                 "Cons" ->
+                   Right $
+                   forall_ ("a", Type) $
+                   arr (pure "a") $
+                   arr (App (pure "List") (pure "a")) $
+                   App (pure "List") (pure "a")
+                 "A" -> Right Type
+                 a -> Left a)
+             (\case
+                 "List" -> Right Many
+                 "Nil" -> Right Many
+                 "Cons" -> Right Many
+                 "A" -> Right Zero
+                 a -> Left a)
+             (App (pure "Nil") (pure "A"))
+             Many
+             (App (pure "List") (pure "A")))
