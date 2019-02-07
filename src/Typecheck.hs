@@ -1,15 +1,21 @@
+{-# language DeriveFunctor #-}
 {-# language FlexibleContexts #-}
 module Typecheck where
 
 import Bound.Scope (fromScope, instantiate1, instantiate, hoistScope)
 import Bound.Var (Var(..), unvar)
 import Control.Lens.Setter (over, mapped)
+import Control.Lens.Tuple (_3)
 import Data.Bifunctor (first)
 import Data.Bool (bool)
 import Data.Semiring (times)
 
-import Context
 import Syntax
+
+data Entry a
+  = InductiveEntry { _entryType :: Ty a, _entryCtors :: [(a, Term a)] }
+  | BindingEntry { _entryType :: Ty a }
+  deriving (Eq, Show, Functor)
 
 data TypeError a x
   = NotInScope a
@@ -98,7 +104,7 @@ mergeUsages a b x = do
 
 checkZero ::
   (Eq x, Eq a) =>
-  (x -> Either a (Ty x)) ->
+  (x -> Either a (Entry x)) ->
   (x -> Either a Usage) ->
   Term x ->
   Ty x ->
@@ -107,7 +113,7 @@ checkZero ctx usages tm = check ctx ((Zero <$) . usages) tm Zero . eval
 
 check ::
   (Eq x, Eq a) =>
-  (x -> Either a (Ty x)) ->
+  (x -> Either a (Entry x)) ->
   (x -> Either a Usage) ->
   Term x ->
   Usage ->
@@ -123,7 +129,7 @@ check ctx usages tm u ty_ =
           _ <-
             first Deep1 $
             check
-              (unvar (const $ Right $ F <$> a) (fmap (fmap F) . ctx))
+              (unvar (const $ Right $ BindingEntry (F <$> a)) (fmap (fmap F) . ctx))
               (unvar (const $ Right Zero) ((Zero <$) . usages))
               (fromScope b)
               Zero
@@ -136,7 +142,7 @@ check ctx usages tm u ty_ =
           usages' <-
             first Deep1 $
             check
-              (unvar (const $ Right $ F <$> s) (fmap (fmap F) . ctx))
+              (unvar (const $ Right $ BindingEntry (F <$> s)) (fmap (fmap F) . ctx))
               (unvar (const $ Right $ times u' u) usages)
               (fromScope a)
               u
@@ -151,7 +157,7 @@ check ctx usages tm u ty_ =
           _ <-
             first Deep1 $
             check
-              (unvar (const $ Right $ F <$> a) (fmap (fmap F) . ctx))
+              (unvar (const $ Right $ BindingEntry (F <$> a)) (fmap (fmap F) . ctx))
               (unvar (const $ Right Zero) ((Zero <$) . usages))
               (fromScope b)
               Zero
@@ -165,16 +171,17 @@ check ctx usages tm u ty_ =
           check ctx usages' b u (instantiate1 (Ann a u s) t)
         _ -> Left $ ExpectedTensor ty
     UnpackTensor a b -> do
-      (usages', Entry aUsage aTy) <- infer ctx usages a u
+      (usages', aUsage, aTy) <- infer ctx usages a u
       case aTy of
         Tensor s t -> do
           usages'' <-
             first Deep2 $
             check
               (unvar
-                 (bool
-                    (Right $ F <$> s)
-                    (Right $ fromScope t >>= Var . unvar (const $ B False) F))
+                 (Right . BindingEntry .
+                  bool
+                    (F <$> s)
+                    (fromScope t >>= Var . unvar (const $ B False) F))
                  (fmap (fmap F) . ctx))
               (unvar
                  (bool (Right aUsage) (Right aUsage))
@@ -193,7 +200,7 @@ check ctx usages tm u ty_ =
           _ <-
             first Deep1 $
             check
-              (unvar (const $ Right $ F <$> a) (fmap (fmap F) . ctx))
+              (unvar (const $ Right $ BindingEntry $ F <$> a) (fmap (fmap F) . ctx))
               (unvar (const $ Right Zero) ((Zero <$) . usages))
               (fromScope b)
               Zero
@@ -216,52 +223,52 @@ check ctx usages tm u ty_ =
         Unit -> pure usages
         _ -> Left $ ExpectedUnit ty
     _ -> do
-      (usages', Entry _ tmTy) <- infer ctx usages tm u
+      (usages', _, tmTy) <- infer ctx usages tm u
       if tmTy == ty
         then pure usages'
         else Left $ TypeMismatch ty tmTy
 
 infer ::
   (Eq a, Eq x) =>
-  (x -> Either a (Ty x)) ->
+  (x -> Either a (Entry x)) ->
   (x -> Either a Usage) ->
   Term x ->
   Usage ->
-  Either (TypeError a x) (x -> Either a Usage, Entry x)
+  Either (TypeError a x) (x -> Either a Usage, Usage, Ty x)
 infer ctx usages tm u =
-  over (mapped.mapped.entryType) eval $ -- post compute
+  over (mapped._3) eval $ -- post compute
   case tm of
     Var a -> do
-      aTy <- first NotInScope $ ctx a
+      aTy <- fmap _entryType . first NotInScope $ ctx a
       u' <- first NotInScope $ usages a
       case (u, u') of
-        (Zero, _) -> pure (usages, Entry u' aTy)
+        (Zero, _) -> pure (usages, u', aTy)
         (One, Zero) -> Left $ UsingErased a
-        (One, One) -> pure (\x -> if x == a then Right Zero else usages x, Entry u' aTy)
-        (One, Many) -> pure (usages, Entry u' aTy)
+        (One, One) -> pure (\x -> if x == a then Right Zero else usages x, u', aTy)
+        (One, Many) -> pure (usages, u', aTy)
         (Many, Zero) -> Left $ UsingErased a
-        (Many, One) -> pure (\x -> if x == a then Right Zero else usages x, Entry u' aTy)
-        (Many, Many) -> pure (usages, Entry u' aTy)
+        (Many, One) -> pure (\x -> if x == a then Right Zero else usages x, u', aTy)
+        (Many, Many) -> pure (usages, u', aTy)
     Ann a u' b -> do
       _ <- check ctx ((Zero <$) . usages) b Zero Type
       usages' <- check ctx usages a u' b
-      pure (usages', Entry u' b)
+      pure (usages', u', b)
     App a b -> do
-      (usages', Entry aUsage aTy) <- infer ctx usages a u
+      (usages', aUsage, aTy) <- infer ctx usages a u
       case aTy of
         Pi u' s t -> do
           let u'' = times u' aUsage
           usages'' <- check ctx usages' b u'' s
-          pure (usages'', Entry aUsage $ instantiate1 (Ann b u'' s) t)
+          pure (usages'', aUsage, instantiate1 (Ann b u'' s) t)
         _ -> Left $ ExpectedPi aTy
     Fst a -> do
-      (usages', Entry aUsage aTy) <- infer ctx usages a u
+      (usages', aUsage, aTy) <- infer ctx usages a u
       case aTy of
-        With s _ -> pure (usages', Entry aUsage s)
+        With s _ -> pure (usages', aUsage, s)
         _ -> Left $ ExpectedWith aTy
     Snd a -> do
-      (usages', Entry aUsage aTy) <- infer ctx usages a u
+      (usages', aUsage, aTy) <- infer ctx usages a u
       case aTy of
-        With _ t -> pure (usages', Entry aUsage (instantiate1 (Fst a) t))
+        With _ t -> pure (usages', aUsage, (instantiate1 (Fst a) t))
         _ -> Left $ ExpectedWith aTy
     _ -> Left $ Can'tInfer tm

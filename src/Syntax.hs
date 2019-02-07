@@ -1,13 +1,17 @@
 {-# language DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# language ExistentialQuantification #-}
+{-# language GADTs #-}
 {-# language StandaloneDeriving #-}
 {-# language TemplateHaskell #-}
 module Syntax where
 
+import Bound.Class ((>>>=))
 import Bound.Scope (Scope, abstract1, abstract)
 import Bound.TH (makeBound)
 import Control.Monad.Trans.Class (lift)
 import Data.Deriving (deriveEq1, deriveShow1)
 import Data.Semiring (Semiring(..))
+import Data.Void (Void)
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
 import qualified Text.PrettyPrint.ANSI.Leijen as Pretty
@@ -47,6 +51,13 @@ instance Semiring Usage where
   times One Many = One
   times Many m = m
 
+data Pattern p where
+  PVar :: Pattern ()
+  PCtor :: String -> Int -> Pattern Int
+  PWild :: Pattern Void
+deriving instance Eq (Pattern p)
+deriving instance Show (Pattern p)
+
 type Ty = Term
 data Term a
   = Var a
@@ -68,10 +79,41 @@ data Term a
 
   | Unit
   | MkUnit
-  deriving (Functor, Foldable, Traversable)
-makeBound ''Term
+
+  | forall p. Case (Term a) [(Pattern p, Scope p Term a)]
+deriving instance Functor Term
+deriving instance Foldable Term
+deriving instance Traversable Term
 deriveEq1 ''Term
 deriveShow1 ''Term
+
+instance Applicative Term where; pure = return; (<*>) = ap
+instance Monad Term where
+  return = Var
+
+  tm >>= f =
+    case tm of
+      Var a -> f a
+      Ann a b c -> Ann (a >>= f) b (c >>= f)
+      Type -> Type
+
+      Lam a -> Lam (a >>>= f)
+      Pi a b c -> Pi a (b >>= f) (c >>>= f)
+      App a b -> App (a >>= f) (b >>= f)
+
+      MkTensor a b -> MkTensor (a >>= f) (b >>= f)
+      Tensor a b -> Tensor (a >>= f) (b >>>= f)
+      UnpackTensor a b -> UnpackTensor (a >>= f) (b >>>= f)
+
+      MkWith a b -> MkWith (a >>= f) (b >>= f)
+      With a b -> With (a >>= f) (b >>>= f)
+      Fst a -> Fst (a >>= f)
+      Snd a -> Snd (a >>= f)
+
+      Unit -> Unit
+      MkUnit -> MkUnit
+
+      Case a b -> Case (a >>= f) (fmap (fmap (>>>= f)) b)
 
 lam :: Eq a => a -> Term a -> Term a
 lam a = Lam . abstract1 a

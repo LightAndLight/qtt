@@ -18,9 +18,9 @@ data Inductive a
   } deriving (Eq, Show)
 
 data InductiveError a
-  = InductiveTypeError a (TypeError a a)
-  | InductiveIncorrectType a
-  | InductiveNotStrictlyPositive a
+  = IndTypeError a (TypeError a a)
+  | IndIncorrectType a
+  | IndNotStrictlyPositive a
   deriving (Eq, Show)
 
 returnsCtor :: forall a. Eq a => Term a -> a -> Bool
@@ -62,13 +62,13 @@ checkInductive ctx usages ind = snd $ runWriter go
   where
     go = do
       case checkZero ctx usages (_indTypeType ind) Type of
-        Left e -> tell [InductiveTypeError (_indTypeName ind) e]
+        Left e -> tell [IndTypeError (_indTypeName ind) e]
         Right _ -> pure ()
       for_ (_indConstructors ind) $ \(n, ty) -> do
         case checkZero ctx usages ty Type of
-          Left e -> tell [InductiveTypeError (_indTypeName ind) e]
+          Left e -> tell [IndTypeError (_indTypeName ind) e]
           Right _ -> pure ()
         unless (ty `returnsCtor` _indTypeName ind) $
-          tell [InductiveIncorrectType n]
+          tell [IndIncorrectType n]
         unless (_indTypeName ind `strictlyPositiveIn` ty) $
-          tell [InductiveNotStrictlyPositive n]
+          tell [IndNotStrictlyPositive n]
