@@ -11,6 +11,7 @@ import Control.Lens.Setter (over, mapped)
 import Control.Lens.Tuple (_3)
 import Data.Bifunctor (first)
 import Data.Bool (bool)
+import Data.List.NonEmpty (NonEmpty(..))
 import Data.Semiring (times)
 
 import Syntax
@@ -37,9 +38,8 @@ data TypeError c a x
   | Deep2 (TypeError c a (Var Bool x))
   deriving (Eq, Show)
 
-pickBranch :: (a -> c -> Bool) -> Term c a -> [Term c a] -> [Branch c (Term c) a] -> Term c a
-pickBranch _ _ _ [] = error "pickBranch: no branch to follow"
-pickBranch eq f xs (Branch p v : bs) =
+pickBranch :: (a -> c -> Bool) -> Term c a -> [Term c a] -> NonEmpty (Branch c (Term c) a) -> Term c a
+pickBranch eq f xs (Branch p v :| bs) =
   case p of
     PVar -> instantiate (\case; V -> foldl App f xs) v
     PCtor n count ->
@@ -49,8 +49,11 @@ pickBranch eq f xs (Branch p v : bs) =
           then
             if count == length xs
             then instantiate (\case; C x -> xs !! x) v
-            else error "pickBack: incorrect number of arguments to constructor"
-          else pickBranch eq f xs bs
+            else error "pickBranch: incorrect number of arguments to constructor"
+          else
+            case bs of
+              [] -> error "pickBranch: no brach to take"
+              bb:bbs -> pickBranch eq f xs (bb :| bbs)
         _ -> error "pickBranch: can't match on non-var"
     PWild -> instantiate (\case {}) v
 
@@ -135,6 +138,48 @@ checkZero ::
   Ty c x ->
   Either (TypeError c a x) (x -> Either a Usage)
 checkZero cmp ctx usages tm = check cmp ctx ((Zero <$) . usages) tm Zero . eval cmp
+
+checkBranchesMatching ::
+  (Eq x, Eq c, Eq a) =>
+  (x -> c -> Bool) ->
+  (x -> Either a (Entry c x)) ->
+  (x -> Either a Usage) ->
+  (Usage, Ty c x) ->
+  NonEmpty (Branch c (Term c) x) ->
+  Usage ->
+  Ty c x ->
+  Maybe [(x, Term c x)] ->
+  Either (TypeError c a x) (x -> Either a Usage)
+checkBranchesMatching cmp ctx usages inTy (Branch p v :| bs) u outTy Nothing =
+  case p of
+    PVar -> _
+    PCtor s n -> _
+    PWild -> _
+checkBranchesMatching cmp ctx usages inTy bs u outTy (Just ctors) = _
+
+checkBranches ::
+  (Eq x, Eq c, Eq a) =>
+  (x -> c -> Bool) ->
+  (x -> Either a (Entry c x)) ->
+  (x -> Either a Usage) ->
+  (Usage, Ty c x) ->
+  NonEmpty (Branch c (Term c) x) ->
+  Usage ->
+  Ty c x ->
+  Either (TypeError c a x) (x -> Either a Usage)
+checkBranches cmp ctx usages (inUsage, inTy) bs u outTy = do
+  mustMatch <-
+    case inTyCon of
+      Var c -> do
+        cEntry <- first NotInScope $ ctx c
+        pure $
+          case cEntry of
+            InductiveEntry _ ctors -> Just ctors
+            _ -> Nothing
+      _ -> Right Nothing
+  checkBranchesMatching cmp ctx usages (inUsage, inTy) bs u outTy mustMatch
+  where
+    (inTyCon, _) = unfoldApps inTy
 
 check ::
   (Eq x, Eq c, Eq a) =>
@@ -253,7 +298,9 @@ check cmp ctx usages tm u ty_ =
       case ty of
         Unit -> pure usages
         _ -> Left $ ExpectedUnit ty
-    Case _ _ -> undefined
+    Case a bs -> do
+      (usages', usage, aTy) <- infer cmp ctx usages a u
+      checkBranches cmp ctx usages' (usage, aTy) bs u ty
     _ -> do
       (usages', _, tmTy) <- infer cmp ctx usages tm u
       if tmTy == ty

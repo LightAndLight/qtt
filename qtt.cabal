@@ -35,8 +35,12 @@ library
 
 test-suite qtt-tests
   type:                exitcode-stdio-1.0
+  other-modules:       Test.Typecheck
+                     , Test.Pretty
+                     , Test.Utils
   build-depends:       base ^>=4.12.0.0
                      , qtt
+                     , ansi-wl-pprint
                      , bound
                      , hspec
                      , transformers >= 0.5

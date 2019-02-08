@@ -13,6 +13,7 @@ import Control.Monad.Trans.Class (lift)
 import Data.Deriving (deriveEq1, deriveShow1)
 import Data.Functor.Classes (Eq1(..), Show1(..), eq1, showsPrec1)
 import Data.List (elemIndex)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Semiring (Semiring(..))
 import Data.Type.Equality ((:~:)(..))
 import Data.Void (Void)
@@ -123,7 +124,7 @@ data Term c a
   | Unit
   | MkUnit
 
-  | Case (Term c a) [Branch c (Term c) a]
+  | Case (Term c a) (NonEmpty (Branch c (Term c) a))
 deriving instance Functor (Term c)
 deriving instance Foldable (Term c)
 deriving instance Traversable (Term c)
