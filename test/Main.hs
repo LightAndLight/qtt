@@ -25,50 +25,60 @@ assertLeft e a =
       "expected:\n\n" <> show e <> "\n\nbut got Right"
     Left e' -> e' `shouldBe` e
 
+doCheck ::
+  (String -> Either String (Entry String String)) ->
+  (String -> Either String Usage) ->
+  Term String String ->
+  Usage ->
+  Ty String String ->
+  Either
+  TypeError String String String (String -> Either String Usage)
+doCheck = check @String @String @String (==)
+
 main :: IO ()
 main =
   hspec $ do
     describe "typecheck" $ do
       it "(\\A => \\x => x) :0 (A :0 Type) -> (x :1 A) -> A" $
         assertRight $
-        check @String @String Left Left
+        doCheck Left Left
           (lam "A" $ lam "x" $ pure "x")
           Zero
           (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
       it "(\\A => \\x => x) :1 (A :0 Type) -> (x :1 A) -> A" $
         assertRight $
-        check @String @String Left Left
+        doCheck Left Left
           (lam "A" $ lam "x" $ pure "x")
           One
           (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
       it "(\\A => \\x => x) :w (A :0 Type) -> (x :1 A) -> A" $
         assertRight $
-        check @String @String Left Left
+        doCheck Left Left
           (lam "A" $ lam "x" $ pure "x")
           Many
           (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
       it "(\\A => \\x => x) :0 (A :0 Type) -> (x :0 A) -> A" $
         assertRight $
-        check @String @String Left Left
+        doCheck Left Left
           (lam "A" $ lam "x" $ pure "x")
           Zero
           (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
       it "(\\A => \\x => x) :1 (A :0 Type) -> (x :0 A) -> A   invalid" $
         assertLeft (Deep1 $ Deep1 $ UsingErased $ B ()) $
-        check @String @String Left Left
+        doCheck Left Left
           (lam "A" $ lam "x" $ pure "x")
           One
           (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
       it "(\\A => \\x => x) :w (A :0 Type) -> (x :0 A) -> A   invalid" $
         assertLeft (Deep1 $ Deep1 $ UsingErased $ B ()) $
-        check @String @String Left Left
+        doCheck Left Left
           (lam "A" $ lam "x" $ pure "x")
           Many
           (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
       it "(\\A => \\x => \\y => x) :w (A :0 Type) -> (x :1 A) -> (y :w A) -> A   invalid" $
         assertLeft
           (Deep1 . Deep1 . UnusedLinear $ B ())
-          (check @String @String Left Left
+          (doCheck Left Left
             (lam "A" $ lam "x" $ lam "y" $ pure "y")
             Many
             (forall_ ("A", Type) $
@@ -78,7 +88,7 @@ main =
       it "(\\A => \\x => x) :w (A :1 Type) -> (x :1 A) -> A   invalid" $
         assertLeft
           (Deep1 $ UnusedLinear $ B ())
-          (check @String @String Left Left
+          (doCheck Left Left
             (lam "A" $ lam "x" $ pure "x")
             Many
             (lpi ("A", Type) $
@@ -87,7 +97,7 @@ main =
       it "(\\A => \\x => (x, x)) :w (A :0 Type) -> (x :1 A) -> (y : A ⨂ A)   invalid" $
         assertLeft
           (Deep1 $ Deep1 $ UsingErased $ B ())
-          (check @String @String Left Left
+          (doCheck Left Left
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             Many
             (forall_ ("A", Type) $
@@ -95,7 +105,7 @@ main =
              Tensor (pure "A") (lift $ pure "A")))
       it "(\\A => \\x => (x, x)) :w (A :0 Type) -> (x :w A) -> (y : A ⨂ A)" $
         assertRight
-          (check @String @String Left Left
+          (doCheck Left Left
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             Many
             (forall_ ("A", Type) $
@@ -103,10 +113,10 @@ main =
              Tensor (pure "A") (lift $ pure "A")))
       it "(\\x => let (a, b) = x in a b) :w (x : A -> B ⨂ A) -o B" $
         assertRight
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
-                 "B" -> Right Type
+                 "A" -> Right $ BindingEntry Type
+                 "B" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -119,9 +129,9 @@ main =
       it "(\\x => let (a, b) = x in a) :w (x : A ⨂ A) -o A   invalid" $
         assertLeft
           (Deep1 $ Deep2 $ UnusedLinear $ B True)
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
+                 "A" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -132,9 +142,9 @@ main =
               pure "A"))
       it "(\\x => let (a, b) = x in a) :w (x : A ⨂ A) -> A" $
         assertRight
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
+                 "A" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -145,9 +155,9 @@ main =
               pure "A"))
       it "(\\x => fst x) :w (x : A & A) -o A" $
         assertRight
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
+                 "A" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -158,9 +168,9 @@ main =
               pure "A"))
       it "(\\x => snd x) :w (A & A) -o A" $
         assertRight
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
+                 "A" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -171,10 +181,10 @@ main =
               pure "A"))
       it "(\\x => (fst x, snd x)) :w (A & B) -o (A & B)" $
         assertRight
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
-                 "B" -> Right Type
+                 "A" -> Right $ BindingEntry Type
+                 "B" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -186,9 +196,9 @@ main =
               With (pure "A") (pure "B")))
       it "(\\x => (x, x)) :w A -o (A & A)" $
         assertRight
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
+                 "A" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -199,9 +209,9 @@ main =
               With (pure "A") (pure "A")))
       it "(\\x => let (a, b) = x in (a, b)) :w (A ⨂ B) -> (A & B)" $
         assertRight
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
+                 "A" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -214,9 +224,9 @@ main =
               With (pure "A") (pure "B")))
       it "(\\x => (fst x, snd x)) :w (A & B) -> (A ⨂ B)" $
         assertRight
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
+                 "A" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -228,9 +238,9 @@ main =
               Tensor (pure "A") (pure "B")))
       it "(\\x => let (a, b) = x in (a, b)) :w (A ⨂ B) -o (A & B)" $
         assertRight
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
+                 "A" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -244,9 +254,9 @@ main =
       it "(\\x => (fst x, snd x)) :w (A & B) -o (A ⨂ B)  invalid" $
         assertLeft
           (Deep1 $ UsingErased $ B ())
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
+                 "A" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -259,10 +269,10 @@ main =
       it "(\\x => \\f => f x) :w ∀(a : A), (A -> B) -> B   invalid" $
         assertLeft
           (Deep1 $ Deep1 $ UsingErased $ F $ B ())
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
-                 "B" -> Right Type
+                 "A" -> Right $ BindingEntry Type
+                 "B" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -277,10 +287,10 @@ main =
               pure "B"))
       it "(\\x => \\f => f x) :w A -> (b : ∀(a : A) -> B) -> B" $
         assertRight
-          (check @String @String
+          (doCheck
              (\case
-                 "A" -> Right Type
-                 "B" -> Right Type
+                 "A" -> Right $ BindingEntry Type
+                 "B" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "A" -> Right Zero
@@ -293,22 +303,30 @@ main =
              (arr (pure "A") $
               pi ("b", forall_ ("a", pure "A") (pure "B")) $
               pure "B"))
-      it "List : Type -> Type, Nil : ∀(a : Type) -> List a |- Nil A :w List A" $
+      it "List : Type -> Type, Nil : ∀(a : Type) -> List a |- Nil A :w List A" $ do
+        let
+          nilType =
+            forall_ ("a", Type) $
+            App (pure "List") (pure "a")
+          consType =
+            forall_ ("a", Type) $
+            arr (pure "a") $
+            arr (App (pure "List") (pure "a")) $
+            App (pure "List") (pure "a")
+
         assertRight
-          (check @String @String
+          (doCheck
              (\case
-                 "List" -> Right $ arr Type Type
-                 "Nil" ->
+                 "List" ->
                    Right $
-                   forall_ ("a", Type) $
-                   App (pure "List") (pure "a")
-                 "Cons" ->
-                   Right $
-                   forall_ ("a", Type) $
-                   arr (pure "a") $
-                   arr (App (pure "List") (pure "a")) $
-                   App (pure "List") (pure "a")
-                 "A" -> Right Type
+                   InductiveEntry
+                     (arr Type Type)
+                     [ ("Nil", nilType)
+                     , ("Cons", consType)
+                     ]
+                 "Nil" -> Right . BindingEntry $ nilType
+                 "Cons" -> Right . BindingEntry $ consType
+                 "A" -> Right $ BindingEntry Type
                  a -> Left a)
              (\case
                  "List" -> Right Many

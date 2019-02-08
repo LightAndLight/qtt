@@ -27,6 +27,7 @@ library
                      , lens
                      , mtl
                      , semirings
+                     , text >= 1.2
                      , transformers >= 0.5
   ghc-options:         -Wall -Werror
   hs-source-dirs:      src
