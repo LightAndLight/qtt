@@ -48,55 +48,57 @@ instance Semiring Usage where
   times Many m = m
 
 type Ty = Term
-data Term a
+data Term l a
   = Var a
-  | Ann (Term a) Usage (Term a)
+  | Ann (Term l a) Usage (Term l a)
   | Type
 
-  | Lam (Scope () Term a)
-  | Pi Usage (Term a) (Scope () Term a)
-  | App (Term a) (Term a)
+  | Lam (Scope () (Term l) a)
+  | Pi Usage (Term l a) (Scope () (Term l) a)
+  | App (Term l a) (Term l a)
 
-  | MkTensor (Term a) (Term a)
-  | Tensor (Term a) (Scope () Term a)
-  | UnpackTensor (Term a) (Scope Bool Term a)
+  | MkTensor (Term l a) (Term l a)
+  | Tensor (Term l a) (Scope () (Term l) a)
+  | UnpackTensor (Term l a) (Scope Bool (Term l) a)
 
-  | MkWith (Term a) (Term a)
-  | With (Term a) (Scope () Term a)
-  | Fst (Term a)
-  | Snd (Term a)
+  | MkWith (Term l a) (Term l a)
+  | With (Term l a) (Scope () (Term l) a)
+  | Fst (Term l a)
+  | Snd (Term l a)
 
   | Unit
   | MkUnit
+
+  | Loc l (Term l a)
   deriving (Functor, Foldable, Traversable)
 makeBound ''Term
 deriveEq1 ''Term
 deriveShow1 ''Term
 
-lam :: Eq a => a -> Term a -> Term a
+lam :: Eq a => a -> Term l a -> Term l a
 lam a = Lam . abstract1 a
 
-pi :: Eq a => (a, Ty a) -> Term a -> Term a
+pi :: Eq a => (a, Ty l a) -> Term l a -> Term l a
 pi (a, ty) = Pi Many ty . abstract1 a
 
-lpi :: Eq a => (a, Ty a) -> Term a -> Term a
+lpi :: Eq a => (a, Ty l a) -> Term l a -> Term l a
 lpi (a, ty) = Pi One ty . abstract1 a
 
-forall_ :: Eq a => (a, Ty a) -> Term a -> Term a
+forall_ :: Eq a => (a, Ty l a) -> Term l a -> Term l a
 forall_ (a, ty) = Pi Zero ty . abstract1 a
 
-arr :: Term a -> Term a -> Term a
+arr :: Term l a -> Term l a -> Term l a
 arr a b = Pi Many a $ lift b
 
-limp :: Term a -> Term a -> Term a
+limp :: Term l a -> Term l a -> Term l a
 limp a b = Pi One a $ lift b
 
-unpackTensor :: Eq a => (a, a) -> Term a -> Term a -> Term a
+unpackTensor :: Eq a => (a, a) -> Term l a -> Term l a -> Term l a
 unpackTensor (x, y) m n =
   UnpackTensor m $
   abstract
     (\z -> if z == x then Just False else if z == y then Just True else Nothing)
     n
 
-deriving instance Eq a => Eq (Term a)
-deriving instance Show a => Show (Term a)
+deriving instance (Eq l, Eq a) => Eq (Term l a)
+deriving instance (Show l, Show a) => Show (Term l a)
