@@ -3,8 +3,6 @@
 module Main where
 
 import Prelude hiding (pi)
-import Bound.Var (Var(..))
-import Control.Monad.Trans.Class (lift)
 
 import Test.Hspec
 
@@ -15,7 +13,9 @@ assertRight :: Show a => Either a b -> Expectation
 assertRight a =
   case a of
     Right{} -> pure ()
-    Left e -> expectationFailure $ show e
+    Left e ->
+      expectationFailure $
+      "expected Right but got:\n\n" <> show e
 
 assertLeft :: (Eq a, Show a) => a -> Either a b -> Expectation
 assertLeft e a =
@@ -28,246 +28,246 @@ assertLeft e a =
 main :: IO ()
 main =
   hspec $ do
-    describe "typecheck" $ do
-      it "(\\A => \\x => x) :0 (A :0 Type) -> (x :1 A) -> A" $
+    describe "typecheck @String" $ do
+      it "1) (\\A => \\x => x) :0 (A :0 Type) -> (x :1 A) -> A" $
         assertRight $
-        check @String @String Left Left
+        check @String @String @String id id (const Nothing) (const Nothing)
           (lam "A" $ lam "x" $ pure "x")
           Zero
           (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
-      it "(\\A => \\x => x) :1 (A :0 Type) -> (x :1 A) -> A" $
+      it "2) (\\A => \\x => x) :1 (A :0 Type) -> (x :1 A) -> A" $
         assertRight $
-        check @String @String Left Left
+        check @String @String @String id id (const Nothing) (const Nothing)
           (lam "A" $ lam "x" $ pure "x")
           One
           (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
-      it "(\\A => \\x => x) :w (A :0 Type) -> (x :1 A) -> A" $
+      it "3) (\\A => \\x => x) :w (A :0 Type) -> (x :1 A) -> A" $
         assertRight $
-        check @String @String Left Left
+        check @String @String @String id id (const Nothing) (const Nothing)
           (lam "A" $ lam "x" $ pure "x")
           Many
           (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
-      it "(\\A => \\x => x) :0 (A :0 Type) -> (x :0 A) -> A" $
+      it "4) (\\A => \\x => x) :0 (A :0 Type) -> (x :0 A) -> A" $
         assertRight $
-        check @String @String Left Left
+        check @String @String @String id id (const Nothing) (const Nothing)
           (lam "A" $ lam "x" $ pure "x")
           Zero
           (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
-      it "(\\A => \\x => x) :1 (A :0 Type) -> (x :0 A) -> A   invalid" $
-        assertLeft (Deep1 $ Deep1 $ UsingErased $ B ()) $
-        check @String @String Left Left
+      it "5) (\\A => \\x => x) :1 (A :0 Type) -> (x :0 A) -> A   invalid" $
+        assertLeft (UsingErased "x") $
+        check @String @String @String id id (const Nothing) (const Nothing)
           (lam "A" $ lam "x" $ pure "x")
           One
           (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
-      it "(\\A => \\x => x) :w (A :0 Type) -> (x :0 A) -> A   invalid" $
-        assertLeft (Deep1 $ Deep1 $ UsingErased $ B ()) $
-        check @String @String Left Left
+      it "6) (\\A => \\x => x) :w (A :0 Type) -> (x :0 A) -> A   invalid" $
+        assertLeft (UsingErased "x") $
+        check @String @String @String id id (const Nothing) (const Nothing)
           (lam "A" $ lam "x" $ pure "x")
           Many
           (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
-      it "(\\A => \\x => \\y => x) :w (A :0 Type) -> (x :1 A) -> (y :w A) -> A   invalid" $
+      it "7) (\\A => \\x => \\y => y) :w (A :0 Type) -> (x :1 A) -> (y :w A) -> A   invalid" $
         assertLeft
-          (Deep1 . Deep1 . UnusedLinear $ B ())
-          (check @String @String Left Left
+          (UnusedLinear "x")
+          (check @String @String @String id id (const Nothing) (const Nothing)
             (lam "A" $ lam "x" $ lam "y" $ pure "y")
             Many
             (forall_ ("A", Type) $
              lpi ("x", pure "A") $
              pi ("y", pure "A") $
              pure "A"))
-      it "(\\A => \\x => x) :w (A :1 Type) -> (x :1 A) -> A   invalid" $
+      it "8) (\\A => \\x => x) :w (A :1 Type) -> (x :1 A) -> A   invalid" $
         assertLeft
-          (Deep1 $ UnusedLinear $ B ())
-          (check @String @String Left Left
+          (UnusedLinear "A")
+          (check @String @String @String id id (const Nothing) (const Nothing)
             (lam "A" $ lam "x" $ pure "x")
             Many
             (lpi ("A", Type) $
              lpi ("x", pure "A") $
              pure "A"))
-      it "(\\A => \\x => (x, x)) :w (A :0 Type) -> (x :1 A) -> (y : A ⨂ A)   invalid" $
+      it "9) (\\A => \\x => (x, x)) :w (A :0 Type) -> (x :1 A) -> (_ : A ⨂ A)   invalid" $
         assertLeft
-          (Deep1 $ Deep1 $ UsingErased $ B ())
-          (check @String @String Left Left
+          (UsingErased "x")
+          (check @String @String @String id id (const Nothing) (const Nothing)
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             Many
             (forall_ ("A", Type) $
              lpi ("x", pure "A") $
-             Tensor (pure "A") (lift $ pure "A")))
-      it "(\\A => \\x => (x, x)) :w (A :0 Type) -> (x :w A) -> (y : A ⨂ A)" $
+             tensor ("_", pure "A") (pure "A")))
+      it "10) (\\A => \\x => (x, x)) :w (A :0 Type) -> (x :w A) -> (_ : A ⨂ A)" $
         assertRight
-          (check @String @String Left Left
+          (check @String @String @String id id (const Nothing) (const Nothing)
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             Many
             (forall_ ("A", Type) $
              pi ("x", pure "A") $
-             Tensor (pure "A") (lift $ pure "A")))
-      it "(\\x => let (a, b) = x in a b) :w (x : A -> B ⨂ A) -o B" $
+             tensor ("_", pure "A") (pure "A")))
+      it "11) (\\x => let (a, b) = x in a b) :w (_ : A -> B ⨂ A) -o B" $
         assertRight
-          (check @String @String
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 "B" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 "B" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 "B" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 "B" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $ unpackTensor ("a", "b") (pure "x") (App (pure "a") (pure "b")))
              Many
-             (limp (Tensor (pure "A" `arr` pure "B") (lift $ pure "A")) $
+             (limp (tensor ("_", pure "A" `arr` pure "B") (pure "A")) $
               pure "B"))
-      it "(\\x => let (a, b) = x in a) :w (x : A ⨂ A) -o A   invalid" $
+      it "12) (\\x => let (a, b) = x in a) :w (_ : A ⨂ A) -o A   invalid" $
         assertLeft
-          (Deep1 $ Deep2 $ UnusedLinear $ B True)
-          (check @String @String
+          (UnusedLinear "b")
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "a"))
              Many
-             (limp (Tensor (pure "A") (lift $ pure "A")) $
+             (limp (tensor ("_", pure "A") (pure "A")) $
               pure "A"))
-      it "(\\x => let (a, b) = x in a) :w (x : A ⨂ A) -> A" $
+      it "13) (\\x => let (a, b) = x in a) :w (_ : A ⨂ A) -> A" $
         assertRight
-          (check @String @String
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "a"))
              Many
-             (arr (Tensor (pure "A") (lift $ pure "A")) $
+             (arr (tensor ("_", pure "A") (pure "A")) $
               pure "A"))
-      it "(\\x => fst x) :w (x : A & A) -o A" $
+      it "14) (\\x => fst x) :w (_ : A & A) -o A" $
         assertRight
-          (check @String @String
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $ Fst $ pure "x")
              Many
-             (limp (With (pure "A") (lift $ pure "A")) $
+             (limp (with ("_", pure "A") (pure "A")) $
               pure "A"))
-      it "(\\x => snd x) :w (A & A) -o A" $
+      it "15) (\\x => snd x) :w (_ : A & A) -o A" $
         assertRight
-          (check @String @String
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $ Snd $ pure "x")
              Many
-             (limp (With (pure "A") (lift $ pure "A")) $
+             (limp (with ("_", pure "A") (pure "A")) $
               pure "A"))
-      it "(\\x => (fst x, snd x)) :w (A & B) -o (A & B)" $
+      it "16) (\\x => (fst x, snd x)) :w (_ : A & B) -o (_ : A & B)" $
         assertRight
-          (check @String @String
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 "B" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 "B" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 "B" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 "B" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $ MkWith (Fst $ pure "x") (Snd $ pure "x"))
              Many
-             (limp (With (pure "A") (lift $ pure "B")) $
-              With (pure "A") (pure "B")))
-      it "(\\x => (x, x)) :w A -o (A & A)" $
+             (limp (with ("_", pure "A") (pure "B")) $
+              with ("_", pure "A") (pure "B")))
+      it "17) (\\x => (x, x)) :w A -o (_ : A & A)" $
         assertRight
-          (check @String @String
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $ MkWith (pure "x") (pure "x"))
              Many
              (limp (pure "A") $
-              With (pure "A") (pure "A")))
-      it "(\\x => let (a, b) = x in (a, b)) :w (A ⨂ B) -> (A & B)" $
+              with ("_", pure "A") (pure "A")))
+      it "18) (\\x => let (a, b) = x in (a, b)) :w (_ : A ⨂ B) -> (_ : A & B)" $
         assertRight
-          (check @String @String
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $
               unpackTensor ("a", "b") (pure "x") $
               MkWith (pure "a") (pure "b"))
              Many
-             (arr (Tensor (pure "A") (pure "B")) $
-              With (pure "A") (pure "B")))
-      it "(\\x => (fst x, snd x)) :w (A & B) -> (A ⨂ B)" $
+             (arr (tensor ("_", pure "A") (pure "B")) $
+              with ("_", pure "A") (pure "B")))
+      it "19) (\\x => (fst x, snd x)) :w (_ : A & B) -> (_ : A ⨂ B)" $
         assertRight
-          (check @String @String
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $
               MkTensor (Fst $ pure "x") (Snd $ pure "x"))
              Many
-             (arr (With (pure "A") (pure "B")) $
-              Tensor (pure "A") (pure "B")))
-      it "(\\x => let (a, b) = x in (a, b)) :w (A ⨂ B) -o (A & B)" $
+             (arr (with ("_", pure "A") (pure "B")) $
+              tensor ("_", pure "A") (pure "B")))
+      it "20) (\\x => let (a, b) = x in (a, b)) :w (_ : A ⨂ B) -o (_ : A & B)" $
         assertRight
-          (check @String @String
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $
               unpackTensor ("a", "b") (pure "x") $
               MkWith (pure "a") (pure "b"))
              Many
-             (limp (Tensor (pure "A") (pure "B")) $
-              With (pure "A") (pure "B")))
-      it "(\\x => (fst x, snd x)) :w (A & B) -o (A ⨂ B)  invalid" $
+             (limp (tensor ("_", pure "A") (pure "B")) $
+              with ("_", pure "A") (pure "B")))
+      it "21) (\\x => (fst x, snd x)) :w (_ : A & B) -o (_ : A ⨂ B)  invalid" $
         assertLeft
-          (Deep1 $ UsingErased $ B ())
-          (check @String @String
+          (UsingErased "x")
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $
               MkTensor (Fst $ pure "x") (Snd $ pure "x"))
              Many
-             (limp (With (pure "A") (pure "B")) $
-              Tensor (pure "A") (pure "B")))
-      it "(\\x => \\f => f x) :w ∀(a : A), (A -> B) -> B   invalid" $
+             (limp (with ("_", pure "A") (pure "B")) $
+              tensor ("_", pure "A") (pure "B")))
+      it "22) (\\x => \\f => f x) :w ∀(x : A), (f : A -> B) -> B   invalid" $
         assertLeft
-          (Deep1 $ Deep1 $ UsingErased $ F $ B ())
-          (check @String @String
+          (UsingErased "x")
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 "B" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 "B" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 "B" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 "B" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $
               lam "f" $
               App (pure "f") (pure "x"))
@@ -275,17 +275,17 @@ main =
              (forall_ ("a", pure "A") $
               arr (arr (pure "A") (pure "B")) $
               pure "B"))
-      it "(\\x => \\f => f x) :w A -> (b : ∀(a : A) -> B) -> B" $
+      it "23) (\\x => \\f => f x) :w A -> (b : ∀(a : A) -> B) -> B" $
         assertRight
-          (check @String @String
+          (check @String @String @String id id
              (\case
-                 "A" -> Right Type
-                 "B" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 "B" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "A" -> Right Zero
-                 "B" -> Right Zero
-                 a -> Left a)
+                 "A" -> Just Zero
+                 "B" -> Just Zero
+                 _ -> Nothing)
              (lam "x" $
               lam "f" $
               App (pure "f") (pure "x"))
@@ -293,29 +293,29 @@ main =
              (arr (pure "A") $
               pi ("b", forall_ ("a", pure "A") (pure "B")) $
               pure "B"))
-      it "List : Type -> Type, Nil : ∀(a : Type) -> List a |- Nil A :w List A" $
+      it "24) List : Type -> Type, Nil : ∀(a : Type) -> List a |- Nil A :w List A" $
         assertRight
-          (check @String @String
+          (check @String @String @String id id
              (\case
-                 "List" -> Right $ arr Type Type
+                 "List" -> Just $ arr Type Type
                  "Nil" ->
-                   Right $
+                   Just $
                    forall_ ("a", Type) $
                    App (pure "List") (pure "a")
                  "Cons" ->
-                   Right $
+                   Just $
                    forall_ ("a", Type) $
                    arr (pure "a") $
                    arr (App (pure "List") (pure "a")) $
                    App (pure "List") (pure "a")
-                 "A" -> Right Type
-                 a -> Left a)
+                 "A" -> Just Type
+                 _ -> Nothing)
              (\case
-                 "List" -> Right Many
-                 "Nil" -> Right Many
-                 "Cons" -> Right Many
-                 "A" -> Right Zero
-                 a -> Left a)
+                 "List" -> Just Many
+                 "Nil" -> Just Many
+                 "Cons" -> Just Many
+                 "A" -> Just Zero
+                 _ -> Nothing)
              (App (pure "Nil") (pure "A"))
              Many
              (App (pure "List") (pure "A")))

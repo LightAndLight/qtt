@@ -1,49 +1,60 @@
+{-# language DeriveFunctor #-}
 {-# language FlexibleContexts #-}
+{-# language TemplateHaskell #-}
 module Typecheck where
 
-import Bound.Scope (fromScope, instantiate1, instantiate, hoistScope)
+import Bound.Name (Name(..), instantiateName, instantiate1Name)
+import Bound.Scope (fromScope, instantiate1, hoistScope)
 import Bound.Var (Var(..), unvar)
+import Control.Applicative ((<|>))
+import Control.Comonad (extract)
 import Control.Lens.Setter (over, mapped)
-import Data.Bifunctor (first)
+import Control.Lens.TH (makeLenses)
+import Control.Monad (guard)
 import Data.Bool (bool)
 import Data.Semiring (times)
 
-import Context
+import qualified Bound.Name as Bound
+
 import Syntax
 
-data TypeError a x
+data Entry n l a
+  = Entry
+  { _entryUsage :: Usage
+  , _entryType :: Term n l a
+  } deriving (Eq, Show, Functor)
+makeLenses ''Entry
+
+data TypeError l a
   = NotInScope a
-  | UsingErased x
-  | UnusedLinear x
-  | UnerasedFst (Term x)
-  | UnerasedSnd (Term x)
-  | ExpectedType (Term x)
-  | ExpectedPi (Term x)
-  | ExpectedTensor (Term x)
-  | ExpectedWith (Term x)
-  | ExpectedUnit (Term x)
-  | TypeMismatch (Term x) (Term x)
-  | Can'tInfer (Term x)
-  | Deep1 (TypeError a (Var () x))
-  | Deep2 (TypeError a (Var Bool x))
+  | UsingErased a
+  | UnusedLinear a
+  | ExpectedType (Term a l a)
+  | ExpectedPi (Term a l a)
+  | ExpectedTensor (Term a l a)
+  | ExpectedWith (Term a l a)
+  | ExpectedUnit (Term a l a)
+  | TypeMismatch (Term a l a) (Term a l a)
+  | Can'tInfer (Term a l a)
   deriving (Eq, Show)
 
-eval :: Term a -> Term a
+eval :: Term n l a -> Term n l a
 eval tm =
   case tm of
+    Loc _ a -> eval a
     Var a -> Var a
     Ann a _ _ -> a
     Type -> Type
-    Lam a -> Lam $ hoistScope eval a
-    Pi u a b -> Pi u (eval a) (hoistScope eval b)
+    Lam n a -> Lam n $ hoistScope eval a
+    Pi u n a b -> Pi u n (eval a) (hoistScope eval b)
     App a b ->
       case eval a of
-        Lam s -> eval $ instantiate1 b s
+        Lam _ s -> eval $ instantiate1 b s
         a' -> App a' $ eval b
     MkTensor a b -> MkTensor (eval a) (eval b)
-    Tensor a b -> Tensor (eval a) (hoistScope eval b)
+    Tensor n a b -> Tensor n (eval a) (hoistScope eval b)
     MkWith a b -> MkWith (eval a) (eval b)
-    With a b -> With (eval a) (hoistScope eval b)
+    With n a b -> With n (eval a) (hoistScope eval b)
     Fst a ->
       case eval a of
         MkWith x _ -> x
@@ -54,34 +65,35 @@ eval tm =
         a' -> Snd a'
     Unit -> Unit
     MkUnit -> MkUnit
-    UnpackTensor a b ->
+    UnpackTensor m n a b ->
       case eval a of
-        MkTensor x y -> eval $ instantiate (bool x y) b
-        a' -> UnpackTensor a' $ hoistScope eval b
+        MkTensor x y -> eval $ instantiateName (bool x y) b
+        a' -> UnpackTensor m n a' $ hoistScope eval b
 
-unsafeGetUsage :: a -> (a -> Either b c) -> c
+unsafeGetUsage :: a -> (a -> Maybe b) -> b
 unsafeGetUsage a usages =
   case usages a of
-    Left{} -> error "check: bound variable's usage was not found"
-    Right u -> u
+    Nothing -> error "check: bound variable's usage was not found"
+    Just u -> u
 
 unsafeCheckConsumed ::
+  (x -> a) -> -- ^ Variable names
   Usage -> -- ^ Expected usage
   x -> -- ^ Variable
-  (x -> Either b Usage) -> -- ^ Usages
-  Either (TypeError a x) ()
-unsafeCheckConsumed u a usages =
+  (x -> Maybe Usage) -> -- ^ Usages
+  Either (TypeError l a) ()
+unsafeCheckConsumed names u a usages =
   let
     u' = unsafeGetUsage a usages
   in
     case (u, u') of
-      (One, One) -> Left $ UnusedLinear a
+      (One, One) -> Left $ UnusedLinear $ names a
       _ -> pure ()
 
 mergeUsages ::
-  (x -> Either a Usage) ->
-  (x -> Either a Usage) ->
-  (x -> Either a Usage)
+  (x -> Maybe Usage) ->
+  (x -> Maybe Usage) ->
+  (x -> Maybe Usage)
 mergeUsages a b x = do
   uA <- a x
   uB <- b x
@@ -98,170 +110,184 @@ mergeUsages a b x = do
 
 checkZero ::
   (Eq x, Eq a) =>
-  (x -> Either a (Ty x)) ->
-  (x -> Either a Usage) ->
-  Term x ->
-  Ty x ->
-  Either (TypeError a x) (x -> Either a Usage)
-checkZero ctx usages tm = check ctx ((Zero <$) . usages) tm Zero . eval
+  (a -> x) ->
+  (x -> a) ->
+  (x -> Maybe (Ty a l x)) ->
+  (x -> Maybe Usage) ->
+  Term a l x ->
+  Ty a l x ->
+  Either (TypeError l a) (x -> Maybe Usage)
+checkZero depth names ctx usages tm =
+  check depth names ctx ((Zero <$) . usages) tm Zero . eval
 
 check ::
   (Eq x, Eq a) =>
-  (x -> Either a (Ty x)) ->
-  (x -> Either a Usage) ->
-  Term x ->
+  (a -> x) ->
+  (x -> a) ->
+  (x -> Maybe (Ty a l x)) ->
+  (x -> Maybe Usage) ->
+  Term a l x ->
   Usage ->
-  Ty x ->
-  Either (TypeError a x) (x -> Either a Usage)
-check ctx usages tm u ty_ =
+  Ty a l x ->
+  Either (TypeError l a) (x -> Maybe Usage)
+check depth names ctx usages tm u ty_ =
   let ty = eval ty_ in -- pre-compute
   case tm of
-    Pi _ a b ->
+    Type ->
+      case ty of
+        Type -> pure usages
+        _ -> Left $ ExpectedType $ names <$> ty
+    Pi _ _ a b ->
       case ty of
         Type -> do
-          _ <- checkZero ctx usages a Type
+          _ <- checkZero depth names ctx usages a Type
           _ <-
-            first Deep1 $
-            check
-              (unvar (const $ Right $ F <$> a) (fmap (fmap F) . ctx))
-              (unvar (const $ Right Zero) ((Zero <$) . usages))
+            checkZero
+              (F . depth)
+              (unvar Bound.name names)
+              (fmap (fmap F) . unvar (const (Just a) . extract) ctx)
+              (unvar (const (Just Zero) . extract) usages)
               (fromScope b)
-              Zero
               Type
           pure usages
-        _ -> Left $ ExpectedType ty
-    Lam a ->
+        _ -> Left $ ExpectedType $ names <$> ty
+    Lam n a ->
       case ty of
-        Pi u' s t -> do
+        Pi u' _ s t -> do
           usages' <-
-            first Deep1 $
             check
-              (unvar (const $ Right $ F <$> s) (fmap (fmap F) . ctx))
-              (unvar (const $ Right $ times u' u) usages)
+              (F . depth)
+              (unvar Bound.name names)
+              (fmap (fmap F) . unvar (const (Just s) . extract) ctx)
+              (unvar (const (Just $ times u' u) . extract) usages)
               (fromScope a)
               u
               (fromScope t)
-          first Deep1 $ unsafeCheckConsumed u' (B ()) usages'
+          unsafeCheckConsumed
+            (unvar Bound.name names)
+            (times u' u)
+            (B $ Name n ())
+            usages'
           pure $ usages' . F
-        _ -> Left $ ExpectedPi ty
-    Tensor a b ->
+        _ -> Left $ ExpectedPi $ names <$> ty
+    Tensor _ a b ->
       case ty of
         Type -> do
-          _ <- checkZero ctx usages a Type
+          _ <- checkZero depth names ctx usages a Type
           _ <-
-            first Deep1 $
-            check
-              (unvar (const $ Right $ F <$> a) (fmap (fmap F) . ctx))
-              (unvar (const $ Right Zero) ((Zero <$) . usages))
+            checkZero
+              (F . depth)
+              (unvar Bound.name names)
+              (fmap (fmap F) . unvar (const (Just a) . extract) ctx)
+              (unvar (const (Just Zero) . extract) usages)
               (fromScope b)
-              Zero
               Type
           pure usages
-        _ -> Left $ ExpectedType ty
+        _ -> Left $ ExpectedType $ names <$> ty
     MkTensor a b ->
       case ty of
-        Tensor s t -> do
-          usages' <- check ctx usages a u s
-          check ctx usages' b u (instantiate1 (Ann a u s) t)
-        _ -> Left $ ExpectedTensor ty
-    UnpackTensor a b -> do
-      (usages', Entry aUsage aTy) <- infer ctx usages a u
+        Tensor _ s t -> do
+          usages' <- check depth names ctx usages a u s
+          check depth names ctx usages' b u (instantiate1 (Ann a u s) t)
+        _ -> Left $ ExpectedTensor $ names <$> ty
+    UnpackTensor n1 n2 a b -> do
+      (usages', Entry aUsage aTy) <- infer depth names ctx usages a u
       case aTy of
-        Tensor s t -> do
+        Tensor _ s t -> do
+          let names' = unvar Bound.name names
           usages'' <-
-            first Deep2 $
             check
-              (unvar
-                 (bool
-                    (Right $ F <$> s)
-                    (Right $ fromScope t >>= Var . unvar (const $ B False) F))
-                 (fmap (fmap F) . ctx))
-              (unvar
-                 (bool (Right aUsage) (Right aUsage))
-                 usages')
+              (F . depth)
+              names'
+              (fmap (fmap F) . unvar (Just . bool s (instantiate1Name (Fst a) t) . extract) ctx)
+              (unvar (const (Just aUsage) . extract) usages')
               (fromScope b)
               u
               (F <$> ty)
-          first Deep2 $ unsafeCheckConsumed aUsage (B False) usages''
-          first Deep2 $ unsafeCheckConsumed aUsage (B True) usages''
+          unsafeCheckConsumed names' aUsage (B $ Name n1 False) usages''
+          unsafeCheckConsumed names' aUsage (B $ Name n2 True) usages''
           pure $ usages'' . F
-        _ -> Left $ ExpectedTensor aTy
-    With a b ->
+        _ -> Left $ ExpectedTensor $ names <$> aTy
+    With _ a b ->
       case ty of
         Type -> do
-          _ <- checkZero ctx usages a Type
+          _ <- checkZero depth names ctx usages a Type
           _ <-
-            first Deep1 $
-            check
-              (unvar (const $ Right $ F <$> a) (fmap (fmap F) . ctx))
-              (unvar (const $ Right Zero) ((Zero <$) . usages))
+            checkZero
+              (F . depth)
+              (unvar Bound.name names)
+              (fmap (fmap F) . unvar (const (Just a)) ctx)
+              (unvar (const (Just Zero)) usages)
               (fromScope b)
-              Zero
               Type
           pure usages
-        _ -> Left $ ExpectedType ty
+        _ -> Left $ ExpectedType $ names <$> ty
     MkWith a b ->
       case ty of
-        With s t -> do
-          usagesA <- check ctx usages a u s
-          usagesB <- check ctx usages b u (instantiate1 (Ann a u s) t)
+        With _ s t -> do
+          usagesA <- check depth names ctx usages a u s
+          usagesB <- check depth names ctx usages b u (instantiate1 (Ann a u s) t)
           pure $ mergeUsages usagesA usagesB
-        _ -> Left $ ExpectedWith ty
+        _ -> Left $ ExpectedWith $ names <$> ty
     Unit ->
       case ty of
         Type -> pure usages
-        _ -> Left $ ExpectedType ty
+        _ -> Left $ ExpectedType $ names <$> ty
     MkUnit ->
       case ty of
         Unit -> pure usages
-        _ -> Left $ ExpectedUnit ty
+        _ -> Left $ ExpectedUnit $ names <$> ty
     _ -> do
-      (usages', Entry _ tmTy) <- infer ctx usages tm u
+      (usages', Entry _ tmTy) <- infer depth names ctx usages tm u
       if tmTy == ty
         then pure usages'
-        else Left $ TypeMismatch ty tmTy
+        else Left $ TypeMismatch (names <$> ty) (names <$> tmTy)
 
 infer ::
   (Eq a, Eq x) =>
-  (x -> Either a (Ty x)) ->
-  (x -> Either a Usage) ->
-  Term x ->
+  (a -> x) ->
+  (x -> a) ->
+  (x -> Maybe (Ty a l x)) ->
+  (x -> Maybe Usage) ->
+  Term a l x ->
   Usage ->
-  Either (TypeError a x) (x -> Either a Usage, Entry x)
-infer ctx usages tm u =
+  Either (TypeError l a) (x -> Maybe Usage, Entry a l x)
+infer depth names ctx usages tm u =
   over (mapped.mapped.entryType) eval $ -- post compute
   case tm of
     Var a -> do
-      aTy <- first NotInScope $ ctx a
-      u' <- first NotInScope $ usages a
+      aTy <- maybe (Left . NotInScope $ names a) pure $ ctx a
+      u' <- maybe (Left . NotInScope $ names a) pure $ usages a
       case (u, u') of
         (Zero, _) -> pure (usages, Entry u' aTy)
-        (One, Zero) -> Left $ UsingErased a
-        (One, One) -> pure (\x -> if x == a then Right Zero else usages x, Entry u' aTy)
+        (One, Zero) -> Left $ UsingErased $ names a
+        (One, One) ->
+          pure (\x -> Zero <$ guard (x == a) <|> usages x, Entry u' aTy)
         (One, Many) -> pure (usages, Entry u' aTy)
-        (Many, Zero) -> Left $ UsingErased a
-        (Many, One) -> pure (\x -> if x == a then Right Zero else usages x, Entry u' aTy)
+        (Many, Zero) -> Left $ UsingErased $ names a
+        (Many, One) ->
+          pure (\x -> Zero <$ guard (x == a) <|> usages x, Entry u' aTy)
         (Many, Many) -> pure (usages, Entry u' aTy)
     Ann a u' b -> do
-      _ <- check ctx ((Zero <$) . usages) b Zero Type
-      usages' <- check ctx usages a u' b
+      _ <- checkZero depth names ctx usages b Type
+      usages' <- check depth names ctx usages a u' b
       pure (usages', Entry u' b)
     App a b -> do
-      (usages', Entry aUsage aTy) <- infer ctx usages a u
+      (usages', Entry aUsage aTy) <- infer depth names ctx usages a u
       case aTy of
-        Pi u' s t -> do
+        Pi u' _ s t -> do
           let u'' = times u' aUsage
-          usages'' <- check ctx usages' b u'' s
+          usages'' <- check depth names ctx usages' b u'' s
           pure (usages'', Entry aUsage $ instantiate1 (Ann b u'' s) t)
-        _ -> Left $ ExpectedPi aTy
+        _ -> Left $ ExpectedPi $ names <$> aTy
     Fst a -> do
-      (usages', Entry aUsage aTy) <- infer ctx usages a u
+      (usages', Entry aUsage aTy) <- infer depth names ctx usages a u
       case aTy of
-        With s _ -> pure (usages', Entry aUsage s)
-        _ -> Left $ ExpectedWith aTy
+        With _ s _ -> pure (usages', Entry aUsage s)
+        _ -> Left $ ExpectedWith $ names <$> aTy
     Snd a -> do
-      (usages', Entry aUsage aTy) <- infer ctx usages a u
+      (usages', Entry aUsage aTy) <- infer depth names ctx usages a u
       case aTy of
-        With _ t -> pure (usages', Entry aUsage (instantiate1 (Fst a) t))
-        _ -> Left $ ExpectedWith aTy
-    _ -> Left $ Can'tInfer tm
+        With _ _ t -> pure (usages', Entry aUsage (instantiate1 (Fst a) t))
+        _ -> Left $ ExpectedWith $ names <$> aTy
+    _ -> Left $ Can'tInfer $ names <$> tm

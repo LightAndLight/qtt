@@ -10,33 +10,33 @@ import Data.Foldable (for_)
 import Syntax
 import Typecheck
 
-data Inductive a
+data Inductive n l a
   = Inductive
   { _indTypeName :: a
-  , _indTypeType :: Term a
-  , _indConstructors :: [(a, Term a)]
+  , _indTypeType :: Term n l a
+  , _indConstructors :: [(a, Term n l a)]
   } deriving (Eq, Show)
 
-data InductiveError a
-  = InductiveTypeError a (TypeError a a)
+data InductiveError l a
+  = InductiveTypeError a (TypeError l a)
   | InductiveIncorrectType a
   | InductiveNotStrictlyPositive a
   deriving (Eq, Show)
 
-returnsCtor :: forall a. Eq a => Term a -> a -> Bool
+returnsCtor :: forall n l a. Eq a => Term n l a -> a -> Bool
 returnsCtor = go id
   where
-    go :: forall x. Eq x => (a -> x) -> Term x -> a -> Bool
-    go ctx (Pi _ _ rest) val = go (F . ctx) (fromScope rest) val
+    go :: forall x. Eq x => (a -> x) -> Term n l x -> a -> Bool
+    go ctx (Pi _ _ _ rest) val = go (F . ctx) (fromScope rest) val
     go ctx (App a _) val = go ctx a val
     go ctx (Var a) val = a == ctx val
     go _ _ _ = False
 
-strictlyPositiveIn :: forall a. Eq a => a -> Term a -> Bool
+strictlyPositiveIn :: forall n l a. Eq a => a -> Term n l a -> Bool
 strictlyPositiveIn = go id
   where
-    validArgPi :: forall x. Eq x => (a -> x) -> a -> Term x -> Bool
-    validArgPi ctx val (Pi _ ty rest) =
+    validArgPi :: forall x. Eq x => (a -> x) -> a -> Term n l x -> Bool
+    validArgPi ctx val (Pi _ _ ty rest) =
       ctx val `notElem` ty &&
       validArgPi (F . ctx) val (fromScope rest)
     validArgPi ctx val ty = validArgApp ctx val ty
@@ -46,26 +46,26 @@ strictlyPositiveIn = go id
       validArgApp ctx val a
     validArgApp _ _ _ = True
 
-    go :: forall x. Eq x => (a -> x) -> a -> Term x -> Bool
-    go ctx val (Pi _ ty rest) =
+    go :: forall x. Eq x => (a -> x) -> a -> Term n l x -> Bool
+    go ctx val (Pi _ _ ty rest) =
       validArgPi ctx val ty &&
       go (F . ctx) val (fromScope rest)
     go _ _ _ = True
 
 checkInductive ::
   Eq a =>
-  (a -> Either a (Ty a)) ->
-  (a -> Either a Usage) ->
-  Inductive a ->
-  [InductiveError a]
+  (a -> Maybe (Ty a l a)) ->
+  (a -> Maybe Usage) ->
+  Inductive a l a ->
+  [InductiveError l a]
 checkInductive ctx usages ind = snd $ runWriter go
   where
     go = do
-      case checkZero ctx usages (_indTypeType ind) Type of
+      case checkZero id id ctx usages (_indTypeType ind) Type of
         Left e -> tell [InductiveTypeError (_indTypeName ind) e]
         Right _ -> pure ()
       for_ (_indConstructors ind) $ \(n, ty) -> do
-        case checkZero ctx usages ty Type of
+        case checkZero id id ctx usages ty Type of
           Left e -> tell [InductiveTypeError (_indTypeName ind) e]
           Right _ -> pure ()
         unless (ty `returnsCtor` _indTypeName ind) $
