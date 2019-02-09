@@ -23,6 +23,7 @@ library
   build-depends:       base ^>=4.12.0.0
                      , ansi-wl-pprint
                      , bound
+                     , comonad
                      , deriving-compat
                      , lens
                      , mtl

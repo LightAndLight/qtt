@@ -1,19 +1,21 @@
 {-# language OverloadedLists #-}
-{-# language TypeApplications #-}
 module Test.Pretty where
 
-import Text.PrettyPrint.ANSI.Leijen (Doc)
+import Text.PrettyPrint.ANSI.Leijen (Doc, pretty)
 import Test.Hspec
 
 import Syntax
 import Syntax.Pretty
 
+doPrettyTerm :: Term String String String -> Doc
+doPrettyTerm = prettyTerm pretty
+
 pretty1 :: Doc
-pretty1 = prettyTerm @String @String (Case (pure "a") [varb "x" $ pure "x"])
+pretty1 = doPrettyTerm $ Case (pure "a") [varb "x" $ pure "x"]
 
 pretty2 :: Doc
 pretty2 =
-  prettyTerm @String @String $
+  doPrettyTerm $
   Case (pure "a")
   [ varb "x" $ pure "x"
   , varb "y" $ pure "y"
@@ -21,7 +23,7 @@ pretty2 =
 
 pretty3 :: Doc
 pretty3 =
-  prettyTerm @String @String $
+  doPrettyTerm $
   Case (pure "a")
   [ ctorb "Nil" [] $ pure "Nil"
   , ctorb "Cons" ["a", "b"] $ App (App (pure "Cons") (pure "a")) (pure "b")
@@ -29,13 +31,13 @@ pretty3 =
 
 pretty4 :: Doc
 pretty4 =
-  prettyTerm @String @String $
+  doPrettyTerm $
   Case (pure "a")
   [ ctorb "Nil" [] $ pure "Nil"
   , ctorb "Cons" ["a", "b"] $
     Case (pure "b")
     [ ctorb "Nil" [] $ pure "Nil"
-    , ctorb "Cons" ["a", "b"] $ App (App (pure "Cons") (pure "a")) (pure "b")
+    , ctorb "Cons" ["c", "d"] $ App (App (pure "Cons") (pure "c")) (pure "d")
     ]
   ]
 
