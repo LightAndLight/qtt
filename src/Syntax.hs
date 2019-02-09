@@ -15,6 +15,7 @@ import Data.Deriving (deriveShow1)
 import Data.Functor.Classes (Eq1(..), Show1(..), eq1, showsPrec1)
 import Data.List (elemIndex)
 import Data.List.NonEmpty (NonEmpty)
+import Data.Maybe (isJust)
 import Data.Semiring (Semiring(..))
 import Data.Type.Equality ((:~:)(..))
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
@@ -76,7 +77,9 @@ pathVal :: Path p -> p
 pathVal V = ()
 pathVal (C n) = n
 
-data Branch n f a = forall p. Branch (Pattern n p) (Scope (Name n (Path p)) f a)
+data Branch n f a
+  = forall p. Branch (Pattern n p) (Scope (Name n (Path p)) f a)
+  | forall p. BranchImpossible (Pattern n p)
 deriving instance Functor f => Functor (Branch n f)
 deriving instance Foldable f => Foldable (Branch n f)
 deriving instance Traversable f => Traversable (Branch n f)
@@ -86,6 +89,9 @@ instance (Monad f, Eq1 f, Eq n) => Eq1 (Branch n f) where
     case eqPattern a a' of
       Just Refl -> liftEq f b b'
       Nothing -> False
+  liftEq _ (BranchImpossible a) (BranchImpossible a') =
+    isJust $ eqPattern a a'
+  liftEq _ _ _ = False
 
 instance (Monad f, Eq n, Eq1 f, Eq a) => Eq (Branch n f a) where
   (==) = eq1
@@ -97,12 +103,17 @@ instance (Show n, Show1 f) => Show1 (Branch n f) where
     showsPrec 11 a .
     showString " " .
     liftShowsPrec sp sl 11 b
+  liftShowsPrec _ _ d (BranchImpossible a) =
+    showParen (d > 10) $
+    showString "Branch " .
+    showsPrec 11 a
 
 instance (Show n, Show1 f, Show a) => Show (Branch n f a) where
   showsPrec = showsPrec1
 
 instance Bound (Branch n) where
   Branch a b >>>= f = Branch a (b >>>= f)
+  BranchImpossible a >>>= _ = BranchImpossible a
 
 type Ty = Term
 data Term n l a
