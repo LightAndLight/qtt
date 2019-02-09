@@ -24,6 +24,7 @@ library
                      , ansi-wl-pprint
                      , bound
                      , comonad
+                     , containers
                      , deriving-compat
                      , lens
                      , mtl

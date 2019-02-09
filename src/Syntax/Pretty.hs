@@ -3,7 +3,6 @@
 {-# language LambdaCase #-}
 module Syntax.Pretty where
 
-import Bound.Name (Name(..))
 import Bound.Scope (fromScope)
 import Bound.Var (unvar)
 import Control.Lens.Cons (_Snoc)
@@ -39,11 +38,6 @@ prettyBranch pvar (Branch a b) =
       , hangCase
           (prettyTerm (unvar (pretty . Bound.name) pvar))
           (fromScope b)
-      ]
-    PWild ->
-      Pretty.hsep
-      [ Pretty.text "_ =>"
-      , hangCase (prettyTerm (unvar (\case; Name _ x -> case x of {}) pvar)) (fromScope b)
       ]
 
 prettyTerm :: Pretty n => (a -> Doc) -> Term n l a -> Doc

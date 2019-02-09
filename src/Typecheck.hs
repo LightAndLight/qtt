@@ -4,6 +4,7 @@
 {-# language GADTs #-}
 {-# language LambdaCase #-}
 {-# language TemplateHaskell #-}
+{-# language RankNTypes #-}
 module Typecheck where
 
 import Bound.Name (Name(..), instantiateName, instantiate1Name)
@@ -14,17 +15,22 @@ import Control.Comonad (extract)
 import Control.Lens.Setter (over, mapped)
 import Control.Lens.Tuple (_3)
 import Control.Lens.TH (makeLenses)
-import Control.Monad (guard)
+import Control.Monad (guard, unless)
 import Data.Bool (bool)
 import Data.List.NonEmpty (NonEmpty(..))
+import Data.Map (Map)
+import Data.Maybe (fromMaybe)
 import Data.Semiring (times)
+import Data.Set (Set)
 
 import qualified Bound.Name as Bound
+import qualified Data.Map as Map
+import qualified Data.Set as Set
 
 import Syntax
 
 data Entry n l a
-  = InductiveEntry { _entryType :: Ty n l a, _entryCtors :: [(n, Term n l a)] }
+  = InductiveEntry { _entryType :: Ty n l a, _entryCtors :: Map n (Term n l a) }
   | BindingEntry { _entryType :: Ty n l a }
   deriving (Eq, Show, Functor)
 makeLenses ''Entry
@@ -40,6 +46,9 @@ data TypeError l a
   | ExpectedUnit (Term a l a)
   | TypeMismatch (Term a l a) (Term a l a)
   | Can'tInfer (Term a l a)
+  | NotConstructorFor a (Term a l a)
+  | TooManyArguments a
+  | NotEnoughArguments a
   deriving (Eq, Show)
 
 pickBranch ::
@@ -65,7 +74,6 @@ pickBranch depth f xs (Branch p v :| bs) =
               [] -> error "pickBranch: no brach to take"
               bb:bbs -> pickBranch depth f xs (bb :| bbs)
         _ -> error "pickBranch: can't match on non-var"
-    PWild -> instantiateName (\case {}) v
 
 eval :: Eq x => (a -> x) -> Term a l x -> Term a l x
 eval depth tm =
@@ -140,37 +148,129 @@ mergeUsages a b x = do
     (Many, One) -> error "mergeUsages: many as one"
     (Many, Many) -> pure Many
 
-checkBranchesMatching ::
-  (Eq x, Eq a) =>
+withCtorArgs ::
+  (Eq x, Ord a) =>
   (a -> x) ->
   (x -> a) ->
   (x -> Maybe (Entry a l x)) ->
   (x -> Maybe Usage) ->
-  (Usage, Ty a l x) ->
+  Usage -> -- ^ Usage for args
+  a -> -- ^ Constructor name
+  Ty a l x -> -- ^ Constructor type
+  [a] -> -- ^ Arg names
+  (forall y.
+   (a -> y) ->
+   (y -> a) ->
+   (y -> Maybe (Entry a l y)) ->
+   (y -> Maybe Usage) ->
+   Ty a l y ->
+   Either (TypeError l a) r) -> -- ^ Continuation
+  Either (TypeError l a) r
+withCtorArgs _ _ _ _ _ ctorName Pi{} [] _ =
+  Left $ TooManyArguments ctorName
+withCtorArgs depth names ctx usages argsUsage ctorName ctorTy [] k =
+  k depth names ctx usages ctorTy
+withCtorArgs depth names ctx usages argsUsage ctorName (Pi u mn s t) (a:as) k =
+  withCtorArgs
+    (F . depth)
+    (unvar _ _)
+    (unvar _ _)
+    (unvar _ _)
+    argsUsage
+    ctorName
+    (fromScope t)
+    as
+    k
+withCtorArgs _ _ _ _ _ ctorName _ (_:_) _ =
+  Left $ NotEnoughArguments ctorName
+
+checkBranchesMatching ::
+  (Eq x, Ord a) =>
+  (a -> x) ->
+  (x -> a) ->
+  (x -> Maybe (Entry a l x)) ->
+  (x -> Maybe Usage) ->
+  (Term a l x, Usage, Ty a l x) ->
   NonEmpty (Branch a (Term a l) x) ->
   Usage ->
   Ty a l x ->
-  Maybe [(a, Term a l x)] ->
+  Map a (Term a l x) ->
+  Maybe (Set a) ->
   Either (TypeError l a) (x -> Maybe Usage)
-checkBranchesMatching depth names ctx usages inTy (Branch p v :| bs) u outTy Nothing =
+-- We are not matching on an inductive type
+checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :| bs) u outTy ctors Nothing =
+  let
+    u' = times u inUsage
+  in
+    case p of
+      PVar n -> do
+        let names' = unvar Bound.name names
+        usages' <-
+          check
+            (F . depth)
+            names'
+            (fmap (fmap F) . unvar (const $ Just (BindingEntry inTy)) ctx)
+            (unvar (const $ Just u') usages)
+            (fromScope v)
+            u
+            (F <$> outTy)
+        unsafeCheckConsumed names' u' (B $ Name n V) usages'
+        case bs of
+          [] -> pure $ usages' . F
+          bb : bbs -> checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (bb :| bbs) u outTy ctors Nothing
+      PCtor s _ _ -> Left $ NotConstructorFor s $ names <$> inTy
+-- We are matching on an inductive type, and cases remain for `ctors`
+checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCtors (Just remaining) =
+  let
+    u' = times u inUsage
+  in
   case p of
-    PVar n -> _
-    PCtor s ns n -> _
-    PWild -> _
-checkBranchesMatching depth names ctx usages inTy bs u outTy (Just ctors) = _
+    PVar n -> do
+      let names' = unvar Bound.name names
+      usages' <-
+        check
+          (F . depth)
+          names'
+          (fmap (fmap F) . unvar (const $ Just (BindingEntry inTy)) ctx)
+          (unvar (const $ Just u') usages)
+          (fromScope v)
+          u
+          (F <$> outTy)
+      unsafeCheckConsumed names' u' (B $ Name n V) usages'
+      case bs of
+        [] -> pure $ usages' . F
+        bb : bbs ->
+          -- The match is now total
+          checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just mempty)
+    PCtor s ns n -> do
+      unless (Map.member s allCtors) . Left $
+        NotConstructorFor s $ names <$> inTy
+      let
+        names' = unvar Bound.name names
+        tys = Map.lookup s allCtors
+      usages' <-
+        check
+          (F . depth)
+          names'
+          (fmap (fmap F) . unvar (Just . BindingEntry . _ . pathVal . extract) ctx)
+          (unvar (const $ Just u') usages)
+          (fromScope v)
+          u
+          (F <$> outTy)
+      _
 
 checkBranches ::
-  (Eq x, Eq a) =>
+  (Eq x, Ord a) =>
   (a -> x) ->
   (x -> a) ->
   (x -> Maybe (Entry a l x)) ->
   (x -> Maybe Usage) ->
-  (Usage, Ty a l x) ->
+  (Term a l x, Usage, Ty a l x) ->
   NonEmpty (Branch a (Term a l) x) ->
   Usage ->
   Ty a l x ->
   Either (TypeError l a) (x -> Maybe Usage)
-checkBranches depth names ctx usages (inUsage, inTy) bs u outTy = do
+checkBranches depth names ctx usages (inTm, inUsage, inTy) bs u outTy = do
   mustMatch <-
     case inTyCon of
       Var c -> do
@@ -180,12 +280,22 @@ checkBranches depth names ctx usages (inUsage, inTy) bs u outTy = do
             InductiveEntry _ ctors -> Just ctors
             _ -> Nothing
       _ -> Right Nothing
-  checkBranchesMatching depth names ctx usages (inUsage, inTy) bs u outTy mustMatch
+  checkBranchesMatching
+    depth
+    names
+    ctx
+    usages
+    (inTm, inUsage, inTy)
+    bs
+    u
+    outTy
+    (fromMaybe mempty mustMatch)
+    (Map.keysSet <$> mustMatch)
   where
     (inTyCon, _) = unfoldApps inTy
 
 checkZero ::
-  (Eq x, Eq a) =>
+  (Eq x, Ord a) =>
   (a -> x) ->
   (x -> a) ->
   (x -> Maybe (Entry a l x)) ->
@@ -197,7 +307,7 @@ checkZero depth names ctx usages tm =
   check depth names ctx ((Zero <$) . usages) tm Zero . eval depth
 
 check ::
-  (Eq x, Eq a) =>
+  (Eq x, Ord a) =>
   (a -> x) ->
   (x -> a) ->
   (x -> Maybe (Entry a l x)) ->
@@ -315,7 +425,7 @@ check depth names ctx usages tm u ty_ =
         _ -> Left $ ExpectedUnit $ names <$> ty
     Case a bs -> do
       (usages', usage, aTy) <- infer depth names ctx usages a u
-      checkBranches depth names ctx usages' (usage, aTy) bs u ty
+      checkBranches depth names ctx usages' (a, usage, aTy) bs u ty
     _ -> do
       (usages', _, tmTy) <- infer depth names ctx usages tm u
       if tmTy == ty
@@ -323,7 +433,7 @@ check depth names ctx usages tm u ty_ =
         else Left $ TypeMismatch (names <$> ty) (names <$> tmTy)
 
 infer ::
-  (Eq a, Eq x) =>
+  (Ord a, Eq x) =>
   (a -> x) ->
   (x -> a) ->
   (x -> Maybe (Entry a l x)) ->

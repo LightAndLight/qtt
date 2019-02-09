@@ -6,6 +6,7 @@ import Bound.Var (Var(..))
 import Control.Monad (unless)
 import Control.Monad.Writer.Strict (runWriter, tell)
 import Data.Foldable (for_)
+import Data.Map (Map)
 
 import Syntax
 import Typecheck
@@ -14,7 +15,7 @@ data Inductive n l a
   = Inductive
   { _indTypeName :: a
   , _indTypeType :: Term n l a
-  , _indConstructors :: [(a, Term n l a)]
+  , _indConstructors :: Map a (Term n l a)
   } deriving (Eq, Show)
 
 data InductiveError l a

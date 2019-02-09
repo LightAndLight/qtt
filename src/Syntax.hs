@@ -17,7 +17,6 @@ import Data.List (elemIndex)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Semiring (Semiring(..))
 import Data.Type.Equality ((:~:)(..))
-import Data.Void (Void)
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
 
 import qualified Text.PrettyPrint.ANSI.Leijen as Pretty
@@ -60,13 +59,11 @@ instance Semiring Usage where
 data Pattern c p where
   PVar :: c -> Pattern c ()
   PCtor :: c -> [c] -> Int -> Pattern c Int
-  PWild :: Pattern c Void
 deriving instance Show c => Show (Pattern c p)
 
 eqPattern :: Eq c => Pattern c p -> Pattern c p' -> Maybe (p :~: p')
 eqPattern (PVar _) (PVar _) = Just Refl
 eqPattern (PCtor a _ b) (PCtor a' _ b') | a == a', b == b' = Just Refl
-eqPattern PWild PWild = Just Refl
 eqPattern _ _ = Nothing
 
 data Path p where
@@ -74,6 +71,10 @@ data Path p where
   C :: Int -> Path Int
 deriving instance Eq (Path p)
 deriving instance Show (Path p)
+
+pathVal :: Path p -> p
+pathVal V = ()
+pathVal (C n) = n
 
 data Branch n f a = forall p. Branch (Pattern n p) (Scope (Name n (Path p)) f a)
 deriving instance Functor f => Functor (Branch n f)
@@ -237,6 +238,3 @@ ctorb :: (Eq a, Monad f) => a -> [a] -> f a -> Branch a f a
 ctorb a b = Branch (PCtor a b bl) . abstractName (fmap C . (`elemIndex` b))
   where
     bl = length b
-
-wildb :: Monad f => f a -> Branch c f a
-wildb = Branch PWild . lift
