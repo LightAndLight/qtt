@@ -20,6 +20,7 @@ library
                      , Syntax.Pretty
                      , Inductive
                      , Typecheck
+                     , Unify
   build-depends:       base ^>=4.12.0.0
                      , ansi-wl-pprint
                      , bound
@@ -39,11 +40,13 @@ test-suite qtt-tests
   type:                exitcode-stdio-1.0
   other-modules:       Test.Typecheck
                      , Test.Pretty
+                     , Test.Unify
                      , Test.Utils
   build-depends:       base ^>=4.12.0.0
                      , qtt
                      , ansi-wl-pprint
                      , bound
+                     , containers
                      , hspec
                      , transformers >= 0.5
   main-is:             Main.hs

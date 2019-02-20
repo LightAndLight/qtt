@@ -6,9 +6,11 @@ import Test.Hspec
 
 import Test.Pretty
 import Test.Typecheck
+import Test.Unify
 
 main :: IO ()
 main =
   hspec $ do
     prettySpec
     typecheckSpec
+    unifySpec

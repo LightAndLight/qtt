@@ -1,3 +1,4 @@
+{-# language FlexibleContexts #-}
 {-# language ScopedTypeVariables #-}
 module Inductive where
 
@@ -5,8 +6,9 @@ import Bound.Scope (fromScope)
 import Bound.Var (Var(..))
 import Control.Monad (unless)
 import Control.Monad.Writer.Strict (runWriter, tell)
-import Data.Foldable (for_)
 import Data.Map (Map)
+
+import qualified Data.Map as Map
 
 import Syntax
 import Typecheck
@@ -54,7 +56,7 @@ strictlyPositiveIn = go id
     go _ _ _ = True
 
 checkInductive ::
-  Eq a =>
+  Ord a =>
   (a -> Maybe (Entry a l a)) ->
   (a -> Maybe Usage) ->
   Inductive a l a ->
@@ -65,11 +67,13 @@ checkInductive ctx usages ind = snd $ runWriter go
       case checkZero id id ctx usages (_indTypeType ind) Type of
         Left e -> tell [IndTypeError (_indTypeName ind) e]
         Right _ -> pure ()
-      for_ (_indConstructors ind) $ \(n, ty) -> do
-        case checkZero id id ctx usages ty Type of
-          Left e -> tell [IndTypeError (_indTypeName ind) e]
-          Right _ -> pure ()
-        unless (ty `returnsCtor` _indTypeName ind) $
-          tell [IndIncorrectType n]
-        unless (_indTypeName ind `strictlyPositiveIn` ty) $
-          tell [IndNotStrictlyPositive n]
+      Map.traverseWithKey checkCtor (_indConstructors ind)
+
+    checkCtor n ty = do 
+      case checkZero id id ctx usages ty Type of
+        Left e -> tell [IndTypeError (_indTypeName ind) e]
+        Right _ -> pure ()
+      unless (ty `returnsCtor` _indTypeName ind) $
+        tell [IndIncorrectType n]
+      unless (_indTypeName ind `strictlyPositiveIn` ty) $
+        tell [IndNotStrictlyPositive n]

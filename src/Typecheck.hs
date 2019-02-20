@@ -10,15 +10,16 @@
 module Typecheck where
 
 import Bound.Name (Name(..), instantiateName, instantiate1Name)
-import Bound.Scope (fromScope, toScope, instantiate1, mapBound)
+import Bound.Scope (fromScope, toScope, instantiate1)
 import Bound.Var (Var(..), unvar)
 import Control.Applicative ((<|>))
 import Control.Comonad (extract)
 import Control.Lens.Setter (over, mapped)
 import Control.Lens.Tuple (_3)
 import Control.Lens.TH (makeLenses)
-import Control.Monad (guard, unless)
+import Control.Monad (guard)
 import Data.Bool (bool)
+import Data.Foldable (traverse_)
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
@@ -61,6 +62,10 @@ pickBranch ::
   [Term a l x] ->
   NonEmpty (Branch a (Term a l) x) ->
   Term a l x
+pickBranch depth f xs (BranchImpossible _ :| bs) =
+  case bs of
+    [] -> error "pickBranch: no brach to take"
+    bb:bbs -> pickBranch depth f xs (bb :| bbs)
 pickBranch depth f xs (Branch p v :| bs) =
   case p of
     PVar _ -> instantiateName (\case; V -> foldl App f xs) v
@@ -173,8 +178,6 @@ applyCtorArgs ctorName = go F 0
       pure (fmap f s : tys, ret)
     go _ !_ _ (_:_) = Left $ TooManyArguments ctorName
 
-    joinVar count = unvar B (unvar (const $ B count) F)
-
 checkBranchesMatching ::
   (Eq x, Ord a) =>
   (a -> x) ->
@@ -189,7 +192,7 @@ checkBranchesMatching ::
   Maybe (Set a) ->
   Either (TypeError l a) (x -> Maybe Usage)
 -- impossible branch for a non-inductive type is not allowed
-checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (BranchImpossible _ :| _) u outTy ctors Nothing =
+checkBranchesMatching _ _ _ _ _ (BranchImpossible _ :| _) _ _ _ Nothing =
   Left NotImpossible
 -- We are not matching on an inductive type
 checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :| bs) u outTy ctors Nothing =
@@ -231,7 +234,7 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (BranchImposs
           Nothing -> Left . NotConstructorFor ctorName $ names <$> inTy
           Just res -> pure res
       (argTys, retTy) <- applyCtorArgs ctorName ctorTy ns
-      case matchTerms inTy ctorTy of
+      case undefined argTys retTy inTy ctorTy of
         Just _ -> Left NotImpossible
         Nothing ->
           case bs of
@@ -266,7 +269,7 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :
         case Map.lookup ctorName allCtors of
           Nothing -> Left . NotConstructorFor ctorName $ names <$> inTy
           Just res -> pure res
-      (argTys, retTy) <- applyCtorArgs ctorName ctorTy ns
+      (argTys, _) <- applyCtorArgs ctorName ctorTy ns
       let names' = unvar Bound.name names
       usages' <-
         check
@@ -277,9 +280,9 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :
           (fromScope v)
           u
           (F <$> outTy)
-      traverse (\(n, ix) -> unsafeCheckConsumed names' u' (B $ Name n (C ix)) usages') (zip ns [0..])
+      traverse_ (\(n, ix) -> unsafeCheckConsumed names' u' (B $ Name n (C ix)) usages') (zip ns [0..])
       case bs of
-        [] -> _
+        [] -> undefined
         bb : bbs ->
           checkBranchesMatching
             depth

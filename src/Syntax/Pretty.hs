@@ -19,26 +19,26 @@ hangCase :: (Term n l a -> Doc) -> Term n l a -> Doc
 hangCase f a@Case{} = Pretty.line <> Pretty.indent 2 (f a)
 hangCase f a = f a
 
+prettyPattern :: Pretty n => Pattern n a -> Doc
+prettyPattern p =
+  case p of
+    PVar n -> pretty n
+    PCtor s ns _ -> Pretty.hsep $ pretty s : fmap pretty ns
+
 prettyBranch :: Pretty n => (a -> Doc) -> Branch n (Term n l) a -> Doc
+prettyBranch _ (BranchImpossible a) =
+  Pretty.hsep $
+  [ prettyPattern a
+  , Pretty.text "impossible"
+  ]
 prettyBranch pvar (Branch a b) =
-  case a of
-    PVar n ->
-      Pretty.hsep
-      [ pretty n
-      , Pretty.text "=>"
-      , hangCase
-          (prettyTerm (unvar (pretty . Bound.name) pvar))
-          (fromScope b)
-      ]
-    PCtor s ns _ ->
-      Pretty.hsep $
-      pretty s :
-      fmap pretty ns <>
-      [ Pretty.text "=>"
-      , hangCase
-          (prettyTerm (unvar (pretty . Bound.name) pvar))
-          (fromScope b)
-      ]
+  Pretty.hsep $
+  [ prettyPattern a
+  , Pretty.text "=>"
+  , hangCase
+      (prettyTerm (unvar (pretty . Bound.name) pvar))
+      (fromScope b)
+  ]
 
 prettyTerm :: Pretty n => (a -> Doc) -> Term n l a -> Doc
 prettyTerm pvar tm =

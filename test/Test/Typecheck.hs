@@ -5,6 +5,7 @@ module Test.Typecheck where
 import Prelude hiding (pi)
 
 import Test.Hspec
+import qualified Data.Map as Map
 
 import Syntax
 import Typecheck
@@ -305,9 +306,10 @@ typecheckSpec =
                   Just $
                   InductiveEntry
                     (arr Type Type)
-                    [ ("Nil", nilType)
-                    , ("Cons", consType)
-                    ]
+                    (Map.fromList
+                     [ ("Nil", nilType)
+                     , ("Cons", consType)
+                     ])
                 "Nil" -> Just . BindingEntry $ nilType
                 "Cons" -> Just . BindingEntry $ consType
                 "A" -> Just $ BindingEntry Type
