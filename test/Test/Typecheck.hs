@@ -1,4 +1,5 @@
 {-# language LambdaCase #-}
+{-# language OverloadedLists #-}
 {-# language TypeApplications #-}
 module Test.Typecheck where
 
@@ -7,6 +8,7 @@ import Prelude hiding (pi)
 import Test.Hspec
 import qualified Data.Map as Map
 
+import Context
 import Syntax
 import Typecheck
 
@@ -310,8 +312,8 @@ typecheckSpec =
                      [ ("Nil", nilType)
                      , ("Cons", consType)
                      ])
-                "Nil" -> Just . BindingEntry $ nilType
-                "Cons" -> Just . BindingEntry $ consType
+                "Nil" -> Just . CtorEntry $ nilType
+                "Cons" -> Just . CtorEntry $ consType
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing)
             (\case
@@ -323,3 +325,201 @@ typecheckSpec =
             (App (pure "Nil") (pure "A"))
             Many
             (App (pure "List") (pure "A")))
+    it "25) Bool : Type, True : Bool, False : Bool, x : Bool  |- (case x of { True => False; False => True }) :w Bool" $ do
+      let
+        falseType = pure "Bool"
+        trueType = pure "Bool"
+
+      assertRight
+        (doCheck
+            (\case
+                "Bool" ->
+                  Just $
+                  InductiveEntry
+                    Type
+                    (Map.fromList
+                     [ ("False", falseType)
+                     , ("True", trueType)
+                     ])
+                "False" -> Just . CtorEntry $ falseType
+                "True" -> Just . CtorEntry $ trueType
+                "x" -> Just $ BindingEntry $ pure "Bool"
+                _ -> Nothing)
+            (\case
+                "Bool" -> Just Many
+                "False" -> Just Many
+                "True" -> Just Many
+                "x" -> Just Many
+                _ -> Nothing)
+            (Case (pure "x")
+             [ ctorb "True" [] $ pure "False"
+             , ctorb "False" [] $ pure "True"
+             ])
+            Many
+            (pure "Bool"))
+    it "26) A : Type, B : Type, x : (_ : A & B)  |- (case x of { y => y }) :w (_ : A & B)" $ do
+      assertRight
+        (doCheck
+            (\case
+                "A" -> Just . BindingEntry $ Type
+                "B" -> Just . BindingEntry $ Type
+                "x" -> Just $ BindingEntry $ with ("_", pure "A") (pure "B")
+                _ -> Nothing)
+            (\case
+                "A" -> Just Zero
+                "B" -> Just Zero
+                "x" -> Just Many
+                _ -> Nothing)
+            (Case (pure "x")
+             [ varb "y" $ pure "y"
+             ])
+            Many
+            (with ("_", pure "A") (pure "B")))
+    it "27) ..., BoolS : Bool -> Type, TrueS : BoolS True, FalseS : BoolS False, b : Bool, x : BoolS b  |- (case x of { TrueS => TrueS; FalseS => FalseS }) :w BoolS b" $ do
+      let
+        falseType = pure "Bool"
+        trueType = pure "Bool"
+        falseSType = App (pure "BoolS") (pure "False")
+        trueSType = App (pure "BoolS") (pure "True")
+
+      assertRight
+        (doCheck
+            (\case
+                "Bool" ->
+                  Just $
+                  InductiveEntry
+                    Type
+                    (Map.fromList
+                     [ ("False", falseType)
+                     , ("True", trueType)
+                     ])
+                "False" -> Just . CtorEntry $ falseType
+                "True" -> Just . CtorEntry $ trueType
+                "BoolS" ->
+                  Just $
+                  InductiveEntry
+                    (arr (pure "Bool") Type)
+                    (Map.fromList
+                     [ ("FalseS", falseSType)
+                     , ("TrueS", trueSType)
+                     ])
+                "FalseS" -> Just . CtorEntry $ falseSType
+                "TrueS" -> Just . CtorEntry $ trueSType
+                "b" -> Just $ BindingEntry $ pure "Bool"
+                "x" -> Just $ BindingEntry $ App (pure "BoolS") (pure "b")
+                _ -> Nothing)
+            (\case
+                "Bool" -> Just Many
+                "False" -> Just Many
+                "True" -> Just Many
+                "BoolS" -> Just Many
+                "FalseS" -> Just Many
+                "TrueS" -> Just Many
+                "b" -> Just Zero
+                "x" -> Just Many
+                _ -> Nothing)
+            (Case (pure "x")
+             [ ctorb "TrueS" [] $ pure "TrueS"
+             , ctorb "FalseS" [] $ pure "FalseS"
+             ])
+            Many
+            (App (pure "BoolS") (pure "b")))
+    it "28) ..., BoolS : Bool -> Type, TrueS : BoolS True, FalseS : BoolS False, b : Bool, x : BoolS b  |- (case x of { TrueS => TrueS; FalseS => TrueS }) :w BoolS b   invalid" $ do
+      let
+        falseType = pure "Bool"
+        trueType = pure "Bool"
+        falseSType = App (pure "BoolS") (pure "False")
+        trueSType = App (pure "BoolS") (pure "True")
+
+      assertLeft
+        (TypeMismatch
+           (App (pure "BoolS") (pure "False"))
+           (App (pure "BoolS") (pure "True")))
+        (doCheck
+            (\case
+                "Bool" ->
+                  Just $
+                  InductiveEntry
+                    Type
+                    (Map.fromList
+                     [ ("False", falseType)
+                     , ("True", trueType)
+                     ])
+                "False" -> Just . CtorEntry $ falseType
+                "True" -> Just . CtorEntry $ trueType
+                "BoolS" ->
+                  Just $
+                  InductiveEntry
+                    (arr (pure "Bool") Type)
+                    (Map.fromList
+                     [ ("FalseS", falseSType)
+                     , ("TrueS", trueSType)
+                     ])
+                "FalseS" -> Just . CtorEntry $ falseSType
+                "TrueS" -> Just . CtorEntry $ trueSType
+                "b" -> Just $ BindingEntry $ pure "Bool"
+                "x" -> Just $ BindingEntry $ App (pure "BoolS") (pure "b")
+                _ -> Nothing)
+            (\case
+                "Bool" -> Just Many
+                "False" -> Just Many
+                "True" -> Just Many
+                "BoolS" -> Just Many
+                "FalseS" -> Just Many
+                "TrueS" -> Just Many
+                "b" -> Just Zero
+                "x" -> Just Many
+                _ -> Nothing)
+            (Case (pure "x")
+             [ ctorb "TrueS" [] $ pure "TrueS"
+             , ctorb "FalseS" [] $ pure "TrueS"
+             ])
+            Many
+            (App (pure "BoolS") (pure "b")))
+    it "29) ..., BoolS : Bool -> Type, TrueS : BoolS True, FalseS : BoolS False, x : BoolS True  |- (case x of { TrueS => TrueS; FalseS impossible }) :w BoolS b" $ do
+      let
+        falseType = pure "Bool"
+        trueType = pure "Bool"
+        falseSType = App (pure "BoolS") (pure "False")
+        trueSType = App (pure "BoolS") (pure "True")
+
+      assertRight
+        (doCheck
+            (\case
+                "Bool" ->
+                  Just $
+                  InductiveEntry
+                    Type
+                    (Map.fromList
+                     [ ("False", falseType)
+                     , ("True", trueType)
+                     ])
+                "False" -> Just . CtorEntry $ falseType
+                "True" -> Just . CtorEntry $ trueType
+                "BoolS" ->
+                  Just $
+                  InductiveEntry
+                    (arr (pure "Bool") Type)
+                    (Map.fromList
+                     [ ("FalseS", falseSType)
+                     , ("TrueS", trueSType)
+                     ])
+                "FalseS" -> Just . CtorEntry $ falseSType
+                "TrueS" -> Just . CtorEntry $ trueSType
+                "x" -> Just $ BindingEntry $ App (pure "BoolS") (pure "True")
+                _ -> Nothing)
+            (\case
+                "Bool" -> Just Many
+                "False" -> Just Many
+                "True" -> Just Many
+                "BoolS" -> Just Many
+                "FalseS" -> Just Many
+                "TrueS" -> Just Many
+                "x" -> Just Many
+                _ -> Nothing)
+            (Case (pure "x")
+             [ ctorb "TrueS" [] $ pure "TrueS"
+             , ctorb_imp "FalseS" []
+             ])
+            Many
+            (App (pure "BoolS") (pure "True")))

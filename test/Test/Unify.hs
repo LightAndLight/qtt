@@ -13,7 +13,7 @@ doUnify ::
   Term String String String ->
   Term String String String ->
   Maybe (Subst (Term String String) String)
-doUnify = unifyTerms
+doUnify = unifyTerms (const Nothing)
 
 unifySpec :: Spec
 unifySpec =

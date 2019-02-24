@@ -71,6 +71,7 @@ data Path p where
   V :: Path ()
   C :: Int -> Path Int
 deriving instance Eq (Path p)
+deriving instance Ord (Path p)
 deriving instance Show (Path p)
 
 pathVal :: Path p -> p
@@ -249,3 +250,9 @@ ctorb :: (Eq a, Monad f) => a -> [a] -> f a -> Branch a f a
 ctorb a b = Branch (PCtor a b bl) . abstractName (fmap C . (`elemIndex` b))
   where
     bl = length b
+
+varb_imp :: a -> Branch a f a
+varb_imp a = BranchImpossible (PVar a)
+
+ctorb_imp :: a -> [a] -> Branch a f a
+ctorb_imp a b = BranchImpossible (PCtor a b (length b))

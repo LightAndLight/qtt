@@ -16,7 +16,6 @@ import Control.Applicative ((<|>))
 import Control.Comonad (extract)
 import Control.Lens.Setter (over, mapped)
 import Control.Lens.Tuple (_3)
-import Control.Lens.TH (makeLenses)
 import Control.Monad (guard)
 import Data.Bool (bool)
 import Data.Foldable (traverse_)
@@ -30,13 +29,9 @@ import qualified Bound.Name as Bound
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
+import Context
 import Syntax
-
-data Entry n l a
-  = InductiveEntry { _entryType :: Ty n l a, _entryCtors :: Map n (Term n l a) }
-  | BindingEntry { _entryType :: Ty n l a }
-  deriving (Eq, Show, Functor)
-makeLenses ''Entry
+import Unify
 
 data TypeError l a
   = NotInScope a
@@ -53,6 +48,7 @@ data TypeError l a
   | TooManyArguments a
   | NotEnoughArguments a
   | NotImpossible
+  | UnmatchedCases (Set a)
   deriving (Eq, Show)
 
 pickBranch ::
@@ -156,30 +152,50 @@ mergeUsages a b x = do
     (Many, One) -> error "mergeUsages: many as one"
     (Many, Many) -> pure Many
 
+-- | Apply a list of arguments to a function, throwing an error
+-- if the function cannot be fully applied
 applyCtorArgs ::
   forall a l x.
+  (a -> x) -> -- ^ Depth
   a -> -- ^ Constructor name
   Ty a l x -> -- ^ Constructor type
   [a] -> -- ^ Arg names
-  Either (TypeError l a) ([Ty a l (Var (Name a (Path Int)) x)], Ty a l (Var (Name a (Path Int)) x))
-applyCtorArgs ctorName = go F 0
+  Either
+    (TypeError l a)
+    -- ([Ty a l (Var (Name a (Path Int)) x)], Ty a l (Var (Name a (Path Int)) x))
+    ([Ty a l x], Ty a l x)
+applyCtorArgs depth ctorName = go id 0
   where
     go ::
       forall y.
-      (y -> Var (Name a (Path Int)) x) ->
+      -- (y -> Var (Name a (Path Int)) x) ->
+      (y -> x) ->
       Int -> -- ^ Current arg
       Ty a l y -> -- ^ Constructor type
       [a] -> -- ^ Arg names
-      Either (TypeError l a) ([Ty a l (Var (Name a (Path Int)) x)], Ty a l (Var (Name a (Path Int)) x))
+      Either
+        (TypeError l a)
+        ([Ty a l x], Ty a l x)
     go _ !_ Pi{} [] = Left $ NotEnoughArguments ctorName
     go f !_ ctorTy [] = Right ([], f <$> ctorTy)
     go f !count (Pi _ _ s t) (a:as) = do
-      (tys, ret) <- go (unvar (const $ B $ Name a $ C count) f) (count+1) (fromScope t) as
+      (tys, ret) <-
+        go
+          (unvar (depth . const a) f)
+          (count+1)
+          (fromScope t)
+          as
       pure (fmap f s : tys, ret)
     go _ !_ _ (_:_) = Left $ TooManyArguments ctorName
 
+matchSubst :: Eq a => Term n l a -> Term n l a -> a -> Term n l a
+matchSubst inTm t =
+  case inTm of
+    Var v -> \x -> if x == v then t else pure x
+    _ -> pure
+
 checkBranchesMatching ::
-  (Eq x, Ord a) =>
+  (Ord x, Ord a) =>
   (a -> x) ->
   (x -> a) ->
   (x -> Maybe (Entry a l x)) ->
@@ -233,8 +249,8 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (BranchImposs
         case Map.lookup ctorName allCtors of
           Nothing -> Left . NotConstructorFor ctorName $ names <$> inTy
           Just res -> pure res
-      (argTys, retTy) <- applyCtorArgs ctorName ctorTy ns
-      case undefined argTys retTy inTy ctorTy of
+      (_, retTy) <- applyCtorArgs depth ctorName ctorTy ns
+      case unifyTerms ctx inTy retTy of
         Just _ -> Left NotImpossible
         Nothing ->
           case bs of
@@ -257,7 +273,7 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :
           (unvar (const $ Just u') usages)
           (fromScope v)
           u
-          (F <$> outTy)
+          (fmap F $ outTy >>= matchSubst inTm (Var $ depth n))
       unsafeCheckConsumed names' u' (B $ Name n V) usages'
       case bs of
         [] -> pure $ usages' . F
@@ -269,20 +285,38 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :
         case Map.lookup ctorName allCtors of
           Nothing -> Left . NotConstructorFor ctorName $ names <$> inTy
           Just res -> pure res
-      (argTys, _) <- applyCtorArgs ctorName ctorTy ns
+      (argTys, retTy) <- applyCtorArgs depth ctorName ctorTy ns
+      subst <-
+        maybe
+          (Left $ TypeMismatch (names <$> outTy) (names <$> retTy))
+          pure
+          (unifyTerms ctx outTy retTy)
       let names' = unvar Bound.name names
       usages' <-
         check
           (F . depth)
           names'
-          (unvar (Just . BindingEntry . (argTys !!) . pathVal . extract) (fmap (fmap F) . ctx))
+          (unvar
+             (Just . BindingEntry . fmap F . (argTys !!) . pathVal . extract)
+             (fmap (fmap F) . ctx))
           (unvar (const $ Just u') usages)
           (fromScope v)
           u
-          (F <$> outTy)
+          (fmap F  . bindSubst subst $
+           outTy >>=
+           matchSubst
+             inTm
+             (foldl
+                (\b a -> App b (Var $ depth a))
+                (Var $ depth ctorName)
+                ns))
       traverse_ (\(n, ix) -> unsafeCheckConsumed names' u' (B $ Name n (C ix)) usages') (zip ns [0..])
+      let remaining' = Set.delete ctorName remaining
       case bs of
-        [] -> undefined
+        [] ->
+          if Set.null remaining'
+          then pure (usages' . F)
+          else Left $ UnmatchedCases remaining
         bb : bbs ->
           checkBranchesMatching
             depth
@@ -294,10 +328,10 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :
             u
             outTy
             allCtors
-            (Just $ Set.delete ctorName remaining)
+            (Just remaining')
 
 checkBranches ::
-  (Eq x, Ord a) =>
+  (Ord x, Ord a) =>
   (a -> x) ->
   (x -> a) ->
   (x -> Maybe (Entry a l x)) ->
@@ -332,7 +366,7 @@ checkBranches depth names ctx usages (inTm, inUsage, inTy) bs u outTy = do
     (inTyCon, _) = unfoldApps inTy
 
 checkZero ::
-  (Eq x, Ord a) =>
+  (Ord x, Ord a) =>
   (a -> x) ->
   (x -> a) ->
   (x -> Maybe (Entry a l x)) ->
@@ -344,7 +378,7 @@ checkZero depth names ctx usages tm =
   check depth names ctx ((Zero <$) . usages) tm Zero . eval depth
 
 check ::
-  (Eq x, Ord a) =>
+  (Ord x, Ord a) =>
   (a -> x) ->
   (x -> a) ->
   (x -> Maybe (Entry a l x)) ->
@@ -470,7 +504,7 @@ check depth names ctx usages tm u ty_ =
         else Left $ TypeMismatch (names <$> ty) (names <$> tmTy)
 
 infer ::
-  (Ord a, Eq x) =>
+  (Ord x, Ord a) =>
   (a -> x) ->
   (x -> a) ->
   (x -> Maybe (Entry a l x)) ->

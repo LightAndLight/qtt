@@ -16,7 +16,8 @@ category:            Language
 extra-source-files:  CHANGELOG.md
 
 library
-  exposed-modules:     Syntax
+  exposed-modules:     Context
+                     , Syntax
                      , Syntax.Pretty
                      , Inductive
                      , Typecheck
@@ -32,7 +33,7 @@ library
                      , semirings
                      , text >= 1.2
                      , transformers >= 0.5
-  ghc-options:         -Wall -Werror
+  ghc-options:         -Wall -Werror -Wredundant-constraints
   hs-source-dirs:      src
   default-language:    Haskell2010
 
