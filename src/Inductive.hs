@@ -12,6 +12,7 @@ import qualified Data.Map as Map
 
 import Context
 import Syntax
+import TypeError
 import Typecheck
 
 data Inductive n l a

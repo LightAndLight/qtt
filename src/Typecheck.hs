@@ -31,25 +31,8 @@ import qualified Data.Set as Set
 
 import Context
 import Syntax
+import TypeError
 import Unify
-
-data TypeError l a
-  = NotInScope a
-  | UsingErased a
-  | UnusedLinear a
-  | ExpectedType (Term a l a)
-  | ExpectedPi (Term a l a)
-  | ExpectedTensor (Term a l a)
-  | ExpectedWith (Term a l a)
-  | ExpectedUnit (Term a l a)
-  | TypeMismatch (Term a l a) (Term a l a)
-  | Can'tInfer (Term a l a)
-  | NotConstructorFor a (Term a l a)
-  | TooManyArguments a
-  | NotEnoughArguments a
-  | NotImpossible
-  | UnmatchedCases (Set a)
-  deriving (Eq, Show)
 
 pickBranch ::
   Eq x =>
@@ -250,9 +233,9 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (BranchImposs
           Nothing -> Left . NotConstructorFor ctorName $ names <$> inTy
           Just res -> pure res
       (_, retTy) <- applyCtorArgs depth ctorName ctorTy ns
-      case unifyTerms ctx inTy retTy of
-        Just _ -> Left NotImpossible
-        Nothing ->
+      case unifyTerms names ctx inTy retTy of
+        Right{} -> Left NotImpossible
+        Left{} ->
           case bs of
             [] -> pure usages
             bb : bbs ->
@@ -286,11 +269,7 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :
           Nothing -> Left . NotConstructorFor ctorName $ names <$> inTy
           Just res -> pure res
       (argTys, retTy) <- applyCtorArgs depth ctorName ctorTy ns
-      subst <-
-        maybe
-          (Left $ TypeMismatch (names <$> outTy) (names <$> retTy))
-          pure
-          (unifyTerms ctx outTy retTy)
+      subst <- unifyTerms names ctx outTy retTy
       let names' = unvar Bound.name names
       usages' <-
         check

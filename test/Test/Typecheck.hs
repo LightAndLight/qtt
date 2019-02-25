@@ -10,6 +10,7 @@ import qualified Data.Map as Map
 
 import Context
 import Syntax
+import TypeError
 import Typecheck
 
 import Test.Utils
