@@ -4,9 +4,9 @@
 {-# language FlexibleContexts #-}
 {-# language GADTs #-}
 {-# language LambdaCase #-}
-{-# language TemplateHaskell #-}
 {-# language RankNTypes #-}
 {-# language ScopedTypeVariables #-}
+{-# language TemplateHaskell #-}
 module Typecheck where
 
 import Bound.Name (Name(..), instantiateName, instantiate1Name)
@@ -14,11 +14,14 @@ import Bound.Scope (fromScope, toScope, instantiate1)
 import Bound.Var (Var(..), unvar)
 import Control.Applicative ((<|>))
 import Control.Comonad (extract)
-import Control.Lens.Setter (over, mapped)
+import Control.Lens.Getter ((^.))
+import Control.Lens.Setter ((%~), over, mapped)
+import Control.Lens.TH (makeLenses)
 import Control.Lens.Tuple (_3)
 import Control.Monad (guard)
 import Data.Bool (bool)
 import Data.Foldable (traverse_)
+import Data.Function ((&))
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
@@ -33,6 +36,15 @@ import Context
 import Syntax
 import TypeError
 import Unify
+
+data Env a l x
+  = Env
+  { _envDepth :: a -> x
+  , _envNames :: x -> a
+  , _envTypes :: x -> Maybe (Entry a l x)
+  , _envUsages :: x -> Maybe Usage
+  }
+makeLenses ''Env
 
 pickBranch ::
   Eq x =>
@@ -177,12 +189,23 @@ matchSubst inTm t =
     Var v -> \x -> if x == v then t else pure x
     _ -> pure
 
+deeperEnv ::
+  (b -> a) ->
+  (b -> Maybe (Entry a l x)) ->
+  (b -> Maybe Usage) ->
+  Env a l x ->
+  Env a l (Var b x)
+deeperEnv names types usages env =
+  Env
+  { _envDepth = F . _envDepth env
+  , _envNames = unvar names (_envNames env)
+  , _envTypes = fmap (fmap F) . unvar types (_envTypes env)
+  , _envUsages = unvar usages (_envUsages env)
+  }
+
 checkBranchesMatching ::
   (Ord x, Ord a) =>
-  (a -> x) ->
-  (x -> a) ->
-  (x -> Maybe (Entry a l x)) ->
-  (x -> Maybe Usage) ->
+  Env a l x ->
   (Term a l x, Usage, Ty a l x) ->
   NonEmpty (Branch a (Term a l) x) ->
   Usage ->
@@ -191,54 +214,59 @@ checkBranchesMatching ::
   Maybe (Set a) ->
   Either (TypeError l a) (x -> Maybe Usage)
 -- impossible branch for a non-inductive type is not allowed
-checkBranchesMatching _ _ _ _ _ (BranchImpossible _ :| _) _ _ _ Nothing =
+checkBranchesMatching _ _ (BranchImpossible _ :| _) _ _ _ Nothing =
   Left NotImpossible
 -- We are not matching on an inductive type
-checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :| bs) u outTy ctors Nothing =
+checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy ctors Nothing =
   case p of
     PVar n -> do
-      let names' = unvar Bound.name names
       usages' <-
         check
-          (F . depth)
-          names'
-          (fmap (fmap F) . unvar (const $ Just (BindingEntry inTy)) ctx)
-          (unvar (const $ Just inUsage) usages)
+          (deeperEnv
+             Bound.name
+             (const $ Just (BindingEntry inTy))
+             (const $ Just inUsage)
+             env)
           (fromScope v)
           u
           (F <$> outTy)
-      unsafeCheckConsumed names' inUsage (B $ Name n V) usages'
+      unsafeCheckConsumed
+        (unvar Bound.name (env ^. envNames))
+        inUsage
+        (B $ Name n V)
+        usages'
       case bs of
         [] -> pure $ usages' . F
-        bb : bbs -> checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (bb :| bbs) u outTy ctors Nothing
-    PCtor s _ _ -> Left $ NotConstructorFor s $ names <$> inTy
+        bb : bbs -> checkBranchesMatching env (inTm, inUsage, inTy) (bb :| bbs) u outTy ctors Nothing
+    PCtor s _ _ -> Left $ NotConstructorFor s $ env ^. envNames <$> inTy
 -- impossible branch for an inductive type. the match is impossible if the inductive type has no constructors,
 -- or if the type of the scrutinee is incompatible with with the constructor's output
-checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (BranchImpossible p :| bs) u outTy allCtors (Just remaining) =
+checkBranchesMatching env (inTm, inUsage, inTy) (BranchImpossible p :| bs) u outTy allCtors (Just remaining) =
   case p of
     PVar _ ->
       if Map.null allCtors
       then
         case bs of
-          [] -> pure usages
+          [] -> pure $ env ^. envUsages
           bb : bbs ->
-            checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just remaining)
+            checkBranchesMatching env (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just remaining)
       else Left NotImpossible
     PCtor ctorName ns _ -> do
       ctorTy <-
         case Map.lookup ctorName allCtors of
-          Nothing -> Left . NotConstructorFor ctorName $ names <$> inTy
+          Nothing ->
+            Left . NotConstructorFor ctorName $ env ^. envNames <$> inTy
           Just res -> pure res
-      (_, retTy) <- applyCtorArgs depth ctorName ctorTy ns
-      case unifyInductive names ctx inTy retTy of
+      (_, retTy) <- applyCtorArgs (env ^. envDepth) ctorName ctorTy ns
+      case unifyInductive (env ^. envNames) (env ^. envTypes) inTy retTy of
         Right{} -> Left NotImpossible
         Left{} ->
           case bs of
-            [] -> pure usages
+            [] -> pure $ env ^. envUsages
             bb : bbs ->
-              checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just remaining)
+              checkBranchesMatching env (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just remaining)
 -- We are matching on an inductive type, and cases remain for `ctors`
-checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCtors (Just remaining) =
+checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCtors (Just remaining) =
   case p of
     PVar n -> do
       let names' = unvar Bound.name names
@@ -348,27 +376,21 @@ checkBranches depth names ctx usages (inTm, inUsage, inTy) bs u outTy = do
 
 checkZero ::
   (Ord x, Ord a) =>
-  (a -> x) ->
-  (x -> a) ->
-  (x -> Maybe (Entry a l x)) ->
-  (x -> Maybe Usage) ->
+  Env a l x ->
   Term a l x ->
   Ty a l x ->
   Either (TypeError l a) (x -> Maybe Usage)
-checkZero depth names ctx usages tm =
-  check depth names ctx ((Zero <$) . usages) tm Zero . eval depth
+checkZero env tm =
+  check (env & envUsages %~ ((Zero <$) .)) tm Zero . eval depth
 
 check ::
   (Ord x, Ord a) =>
-  (a -> x) ->
-  (x -> a) ->
-  (x -> Maybe (Entry a l x)) ->
-  (x -> Maybe Usage) ->
+  Env a l x ->
   Term a l x ->
   Usage ->
   Ty a l x ->
   Either (TypeError l a) (x -> Maybe Usage)
-check depth names ctx usages tm u ty_ =
+check env tm u ty_ =
   let ty = eval depth ty_ in -- pre-compute
   case tm of
     Type ->
@@ -486,14 +508,11 @@ check depth names ctx usages tm u ty_ =
 
 infer ::
   (Ord x, Ord a) =>
-  (a -> x) ->
-  (x -> a) ->
-  (x -> Maybe (Entry a l x)) ->
-  (x -> Maybe Usage) ->
+  Env a l x ->
   Term a l x ->
   Usage ->
   Either (TypeError l a) (x -> Maybe Usage, Usage, Ty a l x)
-infer depth names ctx usages tm u =
+infer env tm u =
   over (mapped._3) (eval depth) $ -- post compute
   case tm of
     Var a -> do
