@@ -233,7 +233,7 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (BranchImposs
           Nothing -> Left . NotConstructorFor ctorName $ names <$> inTy
           Just res -> pure res
       (_, retTy) <- applyCtorArgs depth ctorName ctorTy ns
-      case unifyTerms names ctx inTy retTy of
+      case unifyInductive names ctx inTy retTy of
         Right{} -> Left NotImpossible
         Left{} ->
           case bs of
@@ -269,7 +269,7 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :
           Nothing -> Left . NotConstructorFor ctorName $ names <$> inTy
           Just res -> pure res
       (argTys, retTy) <- applyCtorArgs depth ctorName ctorTy ns
-      subst <- unifyTerms names ctx outTy retTy
+      subst <- unifyInductive names ctx outTy retTy
       let names' = unvar Bound.name names
       usages' <-
         check

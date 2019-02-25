@@ -27,18 +27,22 @@ unifySpec =
     it "(\\x => x) ~ (\\x -> y)  fails" $
       doUnify (lam "x" $ pure "x") (lam "x" $ pure "y") `shouldBe`
       Left (TypeMismatch (Var "x") (Var "y"))
-    it "(x : A) -> f x ~ (x : A) -> f x  succeeds with {}" $
-      doUnify
-        (pi ("x", pure "A") (App (pure "f") (pure "x")))
-        (pi ("x", pure "A") (App (pure "f") (pure "x")))
-        `shouldBe` Right mempty
     it "(\\x => x) ~ (\\x -> (y, z))  fails" $
       doUnify (lam "x" $ pure "x") (lam "x" $ MkTensor (pure "y") (pure "z"))
       `shouldBe` Left (TypeMismatch (Var "x") (MkTensor (pure "y") (pure "z")))
-    it "(\\x => x) ~ (\\x -> Unit)  fails" $
+    it "(\\x => x) ~ (\\x -> MkUnit)  fails" $
       doUnify (lam "x" $ pure "x") (lam "x" $ MkUnit)
       `shouldBe` Left (TypeMismatch (Var "x") MkUnit)
     it "(\\x => a) ~ (\\x -> (b, c))  succeeds with {a -> (b, c)}" $
       doUnify (lam "x" $ pure "a") (lam "x" $ MkTensor (pure "b") (pure "c"))
       `shouldBe`
       Right (Subst $ Map.fromList [("a", MkTensor (pure "b") (pure "c"))])
+    it "f x ~ Unit  fails" $
+      doUnify (App (pure "f") (pure "x")) MkUnit
+      `shouldBe` Left (UnknownSolution (App (pure "f") (pure "x")) MkUnit)
+    it "(a, b) ~ (c, d)  succeeds with {a -> c, b -> d}" $
+      doUnify
+        (MkTensor (pure "a") (pure "b"))
+        (MkTensor (pure "c") (pure "d"))
+      `shouldBe`
+      Right (Subst $ Map.fromList [("a", pure "c"), ("b", pure "d")])

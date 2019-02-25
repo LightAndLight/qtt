@@ -1,3 +1,4 @@
+{-# language LambdaCase #-}
 module Unify where
 
 import Bound.Class (Bound(..))
@@ -75,30 +76,39 @@ unifyScopes varNames ctx tm1 tm2 =
       (Right mempty) .
       unSubst
 
-{-
 
-data Thing : (Nat -> Nat) -> Type where
-  MkThing : (n : Nat) -> Thing (\x -> n)
+unifyApps ::
+  Ord a =>
+  (a -> n) ->
+  (a -> Maybe (Entry n l x)) ->
+  Term n l a ->
+  Term n l a ->
+  Either (TypeError l n) (Subst (Term n l) a)
+unifyApps varNames ctx tm1 tm2 =
+  let
+    (f, xs) = unfoldApps tm1
 
-MkThing x : Thing (\xx -> x)   =?   Thing (\xx -> b)
+    fvar =
+      maybe True (\case; CtorEntry{} -> False; _ -> True) $
+      case f of
+        Var a -> ctx a
+        _ -> Nothing
 
+    unifyMany s [] [] = Right s
+    unifyMany s (a:as) (b:bs) = do
+      s1 <- unifyTerms varNames ctx (bindSubst s a) (bindSubst s b)
+      unifyMany (s1 <> s) as bs
+    unifyMany _ _ _ =
+      Left $ TypeMismatch (varNames <$> tm1) (varNames <$> tm2)
+  in
+    case (fvar, xs) of
+      (True, _:_) ->
+        Left $ UnknownSolution (varNames <$> tm1) (varNames <$> tm2)
+      _ -> do
+        let (f', xs') = unfoldApps tm2
+        s1 <- unifyTerms varNames ctx f f'
+        unifyMany s1 xs xs'
 
-data Test : (Nat -> Nat) -> Type where
-  MkTest : (n : Nat) -> Test (\x => n)
-
-test : (a : Nat) -> Test (\x => a) -> Nat
-test a b =
-  case b of
-    MkTest a => a
-
-
-data Test2 : (Nat -> Nat -> Nat) -> Type where
-  MkTest2 : (n : Nat -> Nat) -> Test2 (\x => n)
-
-test2 : Test2 (\x => \y => x) -> Nat
-test2 (MkTest2 _) impossible
-
--}
 unifyTerms ::
   Ord a =>
   (a -> n) ->
@@ -128,10 +138,8 @@ unifyTerms varNames ctx tm1 tm2 =
         pure (s2 <> s1)
     (Ann _ _ a, _) -> unifyTerms varNames ctx a tm2
     (_, Ann _ _ a) -> unifyTerms varNames ctx tm1 a
-    (App a b, App a' b') -> do
-      s1 <- unifyTerms varNames ctx a a'
-      s2 <- unifyTerms varNames ctx (bindSubst s1 b) (bindSubst s1 b')
-      pure (s2 <> s1)
+    (App{}, _) -> unifyApps varNames ctx tm1 tm2
+    (_, App{}) -> unifyApps varNames ctx tm2 tm1
     (MkTensor a b, MkTensor a' b') -> do
       s1 <- unifyTerms varNames ctx a a'
       s2 <- unifyTerms varNames ctx (bindSubst s1 b) (bindSubst s1 b')
@@ -162,3 +170,32 @@ unifyTerms varNames ctx tm1 tm2 =
       if tm1 == tm2
       then pure mempty
       else Left $ TypeMismatch (varNames <$> tm1) (varNames <$> tm2)
+
+unifyInductive ::
+  Ord a =>
+  (a -> n) ->
+  (a -> Maybe (Entry n l x)) ->
+  Term n l a ->
+  Term n l a ->
+  Either (TypeError l n) (Subst (Term n l) a)
+unifyInductive varNames ctx tm1 tm2 =
+  let
+    (f, xs) = unfoldApps tm1
+    (f', xs') = unfoldApps tm2
+
+    unifyMany s [] [] = Right s
+    unifyMany s (a:as) (b:bs) = do
+      s1 <- unifyTerms varNames ctx (bindSubst s a) (bindSubst s b)
+      unifyMany (s1 <> s) as bs
+    unifyMany _ _ _ =
+      Left $ TypeMismatch (varNames <$> tm1) (varNames <$> tm2)
+  in
+    case (f, f') of
+      (Var a, Var a')
+        | Just InductiveEntry{} <- ctx a
+        , Just InductiveEntry{} <- ctx a'
+        ->
+          if a /= a'
+          then Left $ TypeMismatch (varNames <$> tm1) (varNames <$> tm2)
+          else unifyMany mempty xs xs'
+      _ -> unifyTerms varNames ctx tm1 tm2
