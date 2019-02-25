@@ -146,7 +146,7 @@ applyCtorArgs ::
   Either
     (TypeError l a)
     -- ([Ty a l (Var (Name a (Path Int)) x)], Ty a l (Var (Name a (Path Int)) x))
-    ([Ty a l x], Ty a l x)
+    ([(Usage, Ty a l x)], Ty a l x)
 applyCtorArgs depth ctorName = go id 0
   where
     go ::
@@ -158,17 +158,17 @@ applyCtorArgs depth ctorName = go id 0
       [a] -> -- ^ Arg names
       Either
         (TypeError l a)
-        ([Ty a l x], Ty a l x)
+        ([(Usage, Ty a l x)], Ty a l x)
     go _ !_ Pi{} [] = Left $ NotEnoughArguments ctorName
     go f !_ ctorTy [] = Right ([], f <$> ctorTy)
-    go f !count (Pi _ _ s t) (a:as) = do
+    go f !count (Pi u _ s t) (a:as) = do
       (tys, ret) <-
         go
           (unvar (depth . const a) f)
           (count+1)
           (fromScope t)
           as
-      pure (fmap f s : tys, ret)
+      pure ((u, fmap f s) : tys, ret)
     go _ !_ _ (_:_) = Left $ TooManyArguments ctorName
 
 matchSubst :: Eq a => Term n l a -> Term n l a -> a -> Term n l a
@@ -195,26 +195,23 @@ checkBranchesMatching _ _ _ _ _ (BranchImpossible _ :| _) _ _ _ Nothing =
   Left NotImpossible
 -- We are not matching on an inductive type
 checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :| bs) u outTy ctors Nothing =
-  let
-    u' = times u inUsage
-  in
-    case p of
-      PVar n -> do
-        let names' = unvar Bound.name names
-        usages' <-
-          check
-            (F . depth)
-            names'
-            (fmap (fmap F) . unvar (const $ Just (BindingEntry inTy)) ctx)
-            (unvar (const $ Just u') usages)
-            (fromScope v)
-            u
-            (F <$> outTy)
-        unsafeCheckConsumed names' u' (B $ Name n V) usages'
-        case bs of
-          [] -> pure $ usages' . F
-          bb : bbs -> checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (bb :| bbs) u outTy ctors Nothing
-      PCtor s _ _ -> Left $ NotConstructorFor s $ names <$> inTy
+  case p of
+    PVar n -> do
+      let names' = unvar Bound.name names
+      usages' <-
+        check
+          (F . depth)
+          names'
+          (fmap (fmap F) . unvar (const $ Just (BindingEntry inTy)) ctx)
+          (unvar (const $ Just inUsage) usages)
+          (fromScope v)
+          u
+          (F <$> outTy)
+      unsafeCheckConsumed names' inUsage (B $ Name n V) usages'
+      case bs of
+        [] -> pure $ usages' . F
+        bb : bbs -> checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (bb :| bbs) u outTy ctors Nothing
+    PCtor s _ _ -> Left $ NotConstructorFor s $ names <$> inTy
 -- impossible branch for an inductive type. the match is impossible if the inductive type has no constructors,
 -- or if the type of the scrutinee is incompatible with with the constructor's output
 checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (BranchImpossible p :| bs) u outTy allCtors (Just remaining) =
@@ -242,9 +239,6 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (BranchImposs
               checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just remaining)
 -- We are matching on an inductive type, and cases remain for `ctors`
 checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCtors (Just remaining) =
-  let
-    u' = times u inUsage
-  in
   case p of
     PVar n -> do
       let names' = unvar Bound.name names
@@ -253,11 +247,11 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :
           (F . depth)
           names'
           (fmap (fmap F) . unvar (const $ Just (BindingEntry inTy)) ctx)
-          (unvar (const $ Just u') usages)
+          (unvar (const $ Just inUsage) usages)
           (fromScope v)
           u
           (fmap F $ outTy >>= matchSubst inTm (Var $ depth n))
-      unsafeCheckConsumed names' u' (B $ Name n V) usages'
+      unsafeCheckConsumed names' inUsage (B $ Name n V) usages'
       case bs of
         [] -> pure $ usages' . F
         bb : bbs ->
@@ -268,8 +262,9 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :
         case Map.lookup ctorName allCtors of
           Nothing -> Left . NotConstructorFor ctorName $ names <$> inTy
           Just res -> pure res
-      (argTys, retTy) <- applyCtorArgs depth ctorName ctorTy ns
-      subst <- unifyInductive names ctx outTy retTy
+      (args, retTy) <- applyCtorArgs depth ctorName ctorTy ns
+      let (argUsages, argTys) = unzip args
+      subst <- unifyInductive names ctx inTy retTy
       let names' = unvar Bound.name names
       usages' <-
         check
@@ -278,7 +273,7 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :
           (unvar
              (Just . BindingEntry . fmap F . (argTys !!) . pathVal . extract)
              (fmap (fmap F) . ctx))
-          (unvar (const $ Just u') usages)
+          (unvar (Just . times inUsage . (argUsages !!) . pathVal . extract) usages)
           (fromScope v)
           u
           (fmap F  . bindSubst subst $
@@ -289,7 +284,14 @@ checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (Branch p v :
                 (\b a -> App b (Var $ depth a))
                 (Var $ depth ctorName)
                 ns))
-      traverse_ (\(n, ix) -> unsafeCheckConsumed names' u' (B $ Name n (C ix)) usages') (zip ns [0..])
+      traverse_
+        (\(n, ix) ->
+           unsafeCheckConsumed
+             names'
+             (times inUsage $ argUsages !! ix)
+             (B $ Name n (C ix))
+             usages')
+        (zip ns [0..])
       let remaining' = Set.delete ctorName remaining
       case bs of
         [] ->

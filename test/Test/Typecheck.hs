@@ -524,3 +524,113 @@ typecheckSpec =
              ])
             Many
             (App (pure "BoolS") (pure "True")))
+    it "30) Pair : Type -> Type -> Type, MkPair : (A : Type) -> (B : Type) -> (x : A) -> (y : B) -> Pair A B, A :0 Type, B :0 Type, x :1 Pair A B  |- (case x of { MkPair A B a b => a }) :w A   invalid" $ do
+      let
+        mkPairType =
+          forall_ ("A", Type) $
+          forall_ ("B", Type) $
+          pi ("x", pure "A") $
+          pi ("y", pure "B") $
+          App (App (pure "Pair") (pure "A")) (pure "B")
+
+      assertLeft
+        (UnusedLinear "y")
+        (doCheck
+            (\case
+                "Pair" ->
+                  Just $
+                  InductiveEntry
+                    (arr Type $ arr Type Type)
+                    (Map.fromList
+                     [ ("MkPair", mkPairType)
+                     ])
+                "MkPair" -> Just . CtorEntry $ mkPairType
+                "A" -> Just $ BindingEntry $ Type
+                "B" -> Just $ BindingEntry $ Type
+                "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
+                _ -> Nothing)
+            (\case
+                "Pair" -> Just Many
+                "MkPair" -> Just Many
+                "A" -> Just Zero
+                "B" -> Just Zero
+                "x" -> Just One
+                _ -> Nothing)
+            (Case (pure "x")
+             [ ctorb "MkPair" ["A", "B", "x", "y"] $ pure "x"
+             ])
+            Many
+            (pure "A"))
+    it "31) Pair : Type -> Type -> Type, MkPair : (A :0 Type) -> (B :0 Type) -> (x : A) -> (y : B) -> Pair A B, A :0 Type, B :0 Type, x :1 Pair A B  |- (case x of { MkPair A B a b => A }) :w Type   invalid" $ do
+      let
+        mkPairType =
+          forall_ ("A", Type) $
+          forall_ ("B", Type) $
+          pi ("x", pure "A") $
+          pi ("y", pure "B") $
+          App (App (pure "Pair") (pure "A")) (pure "B")
+
+      assertLeft
+        (UsingErased "A")
+        (doCheck
+            (\case
+                "Pair" ->
+                  Just $
+                  InductiveEntry
+                    (arr Type $ arr Type Type)
+                    (Map.fromList
+                     [ ("MkPair", mkPairType)
+                     ])
+                "MkPair" -> Just . CtorEntry $ mkPairType
+                "A" -> Just $ BindingEntry $ Type
+                "B" -> Just $ BindingEntry $ Type
+                "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
+                _ -> Nothing)
+            (\case
+                "Pair" -> Just Many
+                "MkPair" -> Just Many
+                "A" -> Just Zero
+                "B" -> Just Zero
+                "x" -> Just One
+                _ -> Nothing)
+            (Case (pure "x")
+             [ ctorb "MkPair" ["A", "B", "x", "y"] $ pure "A"
+             ])
+            Many
+            Type)
+    it "32) Pair : Type -> Type -> Type, MkPair : (A : Type) -> (B : Type) -> (x : A) -> (y : B) -> Pair A B, A :0 Type, B :0 Type, x :0 Pair A B  |- (case x of { MkPair A B a b => a }) :w A" $ do
+      let
+        mkPairType =
+          forall_ ("A", Type) $
+          forall_ ("B", Type) $
+          pi ("x", pure "A") $
+          pi ("y", pure "B") $
+          App (App (pure "Pair") (pure "A")) (pure "B")
+
+      assertRight
+        (doCheck
+            (\case
+                "Pair" ->
+                  Just $
+                  InductiveEntry
+                    (arr Type $ arr Type Type)
+                    (Map.fromList
+                     [ ("MkPair", mkPairType)
+                     ])
+                "MkPair" -> Just . CtorEntry $ mkPairType
+                "A" -> Just $ BindingEntry $ Type
+                "B" -> Just $ BindingEntry $ Type
+                "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
+                _ -> Nothing)
+            (\case
+                "Pair" -> Just Many
+                "MkPair" -> Just Many
+                "A" -> Just Zero
+                "B" -> Just Zero
+                "x" -> Just Many
+                _ -> Nothing)
+            (Case (pure "x")
+             [ ctorb "MkPair" ["A", "B", "x", "y"] $ pure "x"
+             ])
+            Many
+            (pure "A"))
