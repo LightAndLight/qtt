@@ -16,28 +16,39 @@ category:            Language
 extra-source-files:  CHANGELOG.md
 
 library
-  exposed-modules:     Syntax
+  exposed-modules:     Context
+                     , Syntax
                      , Syntax.Pretty
-                     , Context
                      , Inductive
+                     , TypeError
                      , Typecheck
+                     , Unify
   build-depends:       base ^>=4.12.0.0
                      , ansi-wl-pprint
                      , bound
+                     , comonad
+                     , containers
                      , deriving-compat
                      , lens
                      , mtl
                      , semirings
+                     , text >= 1.2
                      , transformers >= 0.5
-  ghc-options:         -Wall -Werror
+  ghc-options:         -Wall -Werror -Wredundant-constraints
   hs-source-dirs:      src
   default-language:    Haskell2010
 
 test-suite qtt-tests
   type:                exitcode-stdio-1.0
+  other-modules:       Test.Typecheck
+                     , Test.Pretty
+                     , Test.Unify
+                     , Test.Utils
   build-depends:       base ^>=4.12.0.0
                      , qtt
+                     , ansi-wl-pprint
                      , bound
+                     , containers
                      , hspec
                      , transformers >= 0.5
   main-is:             Main.hs
