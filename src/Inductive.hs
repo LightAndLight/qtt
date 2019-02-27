@@ -66,13 +66,13 @@ checkInductive ::
 checkInductive ctx usages ind = snd $ runWriter go
   where
     go = do
-      case checkZero id id ctx usages (_indTypeType ind) Type of
+      case checkZero (Env id id ctx usages) (_indTypeType ind) Type of
         Left e -> tell [IndTypeError (_indTypeName ind) e]
         Right _ -> pure ()
       Map.traverseWithKey checkCtor (_indConstructors ind)
 
     checkCtor n ty = do 
-      case checkZero id id ctx usages ty Type of
+      case checkZero (Env id id ctx usages) ty Type of
         Left e -> tell [IndTypeError (_indTypeName ind) e]
         Right _ -> pure ()
       unless (ty `returnsCtor` _indTypeName ind) $

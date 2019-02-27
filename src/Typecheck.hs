@@ -14,8 +14,8 @@ import Bound.Scope (fromScope, toScope, instantiate1)
 import Bound.Var (Var(..), unvar)
 import Control.Applicative ((<|>))
 import Control.Comonad (extract)
-import Control.Lens.Getter ((^.))
-import Control.Lens.Setter ((%~), over, mapped)
+import Control.Lens.Getter ((^.), view)
+import Control.Lens.Setter ((%~), (.~), over, mapped)
 import Control.Lens.TH (makeLenses)
 import Control.Lens.Tuple (_3)
 import Control.Monad (guard)
@@ -269,39 +269,37 @@ checkBranchesMatching env (inTm, inUsage, inTy) (BranchImpossible p :| bs) u out
 checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCtors (Just remaining) =
   case p of
     PVar n -> do
-      let names' = unvar Bound.name names
       usages' <-
         check
-          (F . depth)
-          names'
-          (fmap (fmap F) . unvar (const $ Just (BindingEntry inTy)) ctx)
-          (unvar (const $ Just inUsage) usages)
+          (deeperEnv
+             Bound.name
+             (const $ Just (BindingEntry inTy))
+             (const $ Just inUsage)
+             env)
           (fromScope v)
           u
-          (fmap F $ outTy >>= matchSubst inTm (Var $ depth n))
-      unsafeCheckConsumed names' inUsage (B $ Name n V) usages'
+          (fmap F $ outTy >>= matchSubst inTm (Var $ (env ^. envDepth) n))
+      unsafeCheckConsumed (unvar Bound.name $ env ^. envNames) inUsage (B $ Name n V) usages'
       case bs of
         [] -> pure $ usages' . F
         bb : bbs ->
           -- The match is now total
-          checkBranchesMatching depth names ctx usages (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just mempty)
+          checkBranchesMatching env (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just mempty)
     PCtor ctorName ns _ -> do
       ctorTy <-
         case Map.lookup ctorName allCtors of
-          Nothing -> Left . NotConstructorFor ctorName $ names <$> inTy
+          Nothing -> Left . NotConstructorFor ctorName $ env ^. envNames <$> inTy
           Just res -> pure res
-      (args, retTy) <- applyCtorArgs depth ctorName ctorTy ns
+      (args, retTy) <- applyCtorArgs (env ^. envDepth) ctorName ctorTy ns
       let (argUsages, argTys) = unzip args
-      subst <- unifyInductive names ctx inTy retTy
-      let names' = unvar Bound.name names
+      subst <- unifyInductive (env ^. envNames) (env ^. envTypes) inTy retTy
       usages' <-
         check
-          (F . depth)
-          names'
-          (unvar
-             (Just . BindingEntry . fmap F . (argTys !!) . pathVal . extract)
-             (fmap (fmap F) . ctx))
-          (unvar (Just . times inUsage . (argUsages !!) . pathVal . extract) usages)
+          (deeperEnv
+             Bound.name
+             (Just . BindingEntry . (argTys !!) . pathVal . extract)
+             (Just . times inUsage . (argUsages !!) . pathVal . extract)
+             env)
           (fromScope v)
           u
           (fmap F  . bindSubst subst $
@@ -309,13 +307,13 @@ checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCt
            matchSubst
              inTm
              (foldl
-                (\b a -> App b (Var $ depth a))
-                (Var $ depth ctorName)
+                (\b a -> App b (Var $ (env ^. envDepth) a))
+                (Var $ (env ^. envDepth) ctorName)
                 ns))
       traverse_
         (\(n, ix) ->
            unsafeCheckConsumed
-             names'
+             (unvar Bound.name $ env ^. envNames)
              (times inUsage $ argUsages !! ix)
              (B $ Name n (C ix))
              usages')
@@ -328,10 +326,7 @@ checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCt
           else Left $ UnmatchedCases remaining
         bb : bbs ->
           checkBranchesMatching
-            depth
-            names
-            ctx
-            usages
+            env
             (inTm, inUsage, inTy)
             (bb :| bbs)
             u
@@ -341,30 +336,28 @@ checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCt
 
 checkBranches ::
   (Ord x, Ord a) =>
-  (a -> x) ->
-  (x -> a) ->
-  (x -> Maybe (Entry a l x)) ->
-  (x -> Maybe Usage) ->
+  Env a l x ->
   (Term a l x, Usage, Ty a l x) ->
   NonEmpty (Branch a (Term a l) x) ->
   Usage ->
   Ty a l x ->
   Either (TypeError l a) (x -> Maybe Usage)
-checkBranches depth names ctx usages (inTm, inUsage, inTy) bs u outTy = do
+checkBranches env (inTm, inUsage, inTy) bs u outTy = do
   mustMatch <-
     case inTyCon of
       Var c -> do
-        cEntry <- maybe (Left $ NotInScope $ names c) pure $ ctx c
+        cEntry <-
+          maybe
+            (Left $ NotInScope $ view envNames env c)
+            pure
+            (view envTypes env c)
         pure $
           case cEntry of
             InductiveEntry _ ctors -> Just ctors
             _ -> Nothing
       _ -> Right Nothing
   checkBranchesMatching
-    depth
-    names
-    ctx
-    usages
+    env
     (inTm, inUsage, inTy)
     bs
     u
@@ -381,7 +374,7 @@ checkZero ::
   Ty a l x ->
   Either (TypeError l a) (x -> Maybe Usage)
 checkZero env tm =
-  check (env & envUsages %~ ((Zero <$) .)) tm Zero . eval depth
+  check (env & envUsages %~ ((Zero <$) .)) tm Zero . eval (env ^. envDepth)
 
 check ::
   (Ord x, Ord a) =>
@@ -391,120 +384,125 @@ check ::
   Ty a l x ->
   Either (TypeError l a) (x -> Maybe Usage)
 check env tm u ty_ =
-  let ty = eval depth ty_ in -- pre-compute
+  let ty = eval (env ^. envDepth) ty_ in -- pre-compute
   case tm of
     Type ->
       case ty of
-        Type -> pure usages
-        _ -> Left $ ExpectedType $ names <$> ty
+        Type -> pure $ env ^. envUsages
+        _ -> Left $ ExpectedType $ env ^. envNames <$> ty
     Pi _ _ a b ->
       case ty of
         Type -> do
-          _ <- checkZero depth names ctx usages a Type
+          _ <- checkZero env a Type
           _ <-
             checkZero
-              (F . depth)
-              (unvar Bound.name names)
-              (fmap (fmap F) . unvar (const (Just $ BindingEntry a) . extract) ctx)
-              (unvar (const (Just Zero) . extract) usages)
+              (deeperEnv
+                 Bound.name
+                 (const (Just $ BindingEntry a) . extract)
+                 (const (Just Zero) . extract)
+                 env)
               (fromScope b)
               Type
-          pure usages
-        _ -> Left $ ExpectedType $ names <$> ty
+          pure $ env ^. envUsages
+        _ -> Left $ ExpectedType $ env ^. envNames <$> ty
     Lam n a ->
       case ty of
         Pi u' _ s t -> do
           usages' <-
             check
-              (F . depth)
-              (unvar Bound.name names)
-              (fmap (fmap F) . unvar (const (Just $ BindingEntry s) . extract) ctx)
-              (unvar (const (Just $ times u' u) . extract) usages)
+              (deeperEnv
+                 Bound.name
+                 (const (Just $ BindingEntry s) . extract)
+                 (const (Just $ times u' u))
+                 env)
               (fromScope a)
               u
               (fromScope t)
           unsafeCheckConsumed
-            (unvar Bound.name names)
+            (unvar Bound.name $ env ^. envNames)
             (times u' u)
             (B $ Name n ())
             usages'
           pure $ usages' . F
-        _ -> Left $ ExpectedPi $ names <$> ty
+        _ -> Left $ ExpectedPi $ env ^. envNames <$> ty
     Tensor _ a b ->
       case ty of
         Type -> do
-          _ <- checkZero depth names ctx usages a Type
+          _ <- checkZero env a Type
           _ <-
             checkZero
-              (F . depth)
-              (unvar Bound.name names)
-              (fmap (fmap F) . unvar (const (Just $ BindingEntry a) . extract) ctx)
-              (unvar (const (Just Zero) . extract) usages)
+              (deeperEnv
+                 Bound.name
+                 (const (Just $ BindingEntry a) . extract)
+                 (const (Just Zero) . extract)
+                 env)
               (fromScope b)
               Type
-          pure usages
-        _ -> Left $ ExpectedType $ names <$> ty
+          pure $ env ^. envUsages
+        _ -> Left $ ExpectedType $ env ^. envNames <$> ty
     MkTensor a b ->
       case ty of
         Tensor _ s t -> do
-          usages' <- check depth names ctx usages a u s
-          check depth names ctx usages' b u (instantiate1 (Ann a u s) t)
-        _ -> Left $ ExpectedTensor $ names <$> ty
+          usages' <- check env a u s
+          check (env & envUsages .~ usages') b u (instantiate1 (Ann a u s) t)
+        _ -> Left $ ExpectedTensor $ env ^. envNames <$> ty
     UnpackTensor n1 n2 a b -> do
-      (usages', aUsage, aTy) <- infer depth names ctx usages a u
+      (usages', aUsage, aTy) <- infer env a u
       case aTy of
         Tensor _ s t -> do
-          let names' = unvar Bound.name names
           usages'' <-
             check
-              (F . depth)
-              names'
-              (fmap (fmap F) . unvar (Just . BindingEntry . bool s (instantiate1Name (Fst a) t) . extract) ctx)
-              (unvar (const (Just aUsage) . extract) usages')
+              (deeperEnv
+                 Bound.name
+                 (Just . BindingEntry . bool s (instantiate1Name (Fst a) t) . extract)
+                 (const (Just aUsage) . extract)
+                 (env & envUsages .~ usages'))
               (fromScope b)
               u
               (F <$> ty)
+          let names' = unvar Bound.name $ env ^. envNames
           unsafeCheckConsumed names' aUsage (B $ Name n1 False) usages''
           unsafeCheckConsumed names' aUsage (B $ Name n2 True) usages''
           pure $ usages'' . F
-        _ -> Left $ ExpectedTensor $ names <$> aTy
+        _ -> Left $ ExpectedTensor $ env ^. envNames <$> aTy
     With _ a b ->
       case ty of
         Type -> do
-          _ <- checkZero depth names ctx usages a Type
+          _ <- checkZero env a Type
           _ <-
             checkZero
-              (F . depth)
-              (unvar Bound.name names)
-              (fmap (fmap F) . unvar (const (Just $ BindingEntry a)) ctx)
-              (unvar (const (Just Zero)) usages)
+              (deeperEnv
+                 Bound.name
+                 (const (Just $ BindingEntry a))
+                 (const (Just Zero))
+                 env)
               (fromScope b)
               Type
-          pure usages
-        _ -> Left $ ExpectedType $ names <$> ty
+          pure $ env ^. envUsages
+        _ -> Left $ ExpectedType $ env ^. envNames <$> ty
     MkWith a b ->
       case ty of
         With _ s t -> do
-          usagesA <- check depth names ctx usages a u s
-          usagesB <- check depth names ctx usages b u (instantiate1 (Ann a u s) t)
+          usagesA <- check env a u s
+          usagesB <- check env b u (instantiate1 (Ann a u s) t)
           pure $ mergeUsages usagesA usagesB
-        _ -> Left $ ExpectedWith $ names <$> ty
+        _ -> Left $ ExpectedWith $ env ^. envNames <$> ty
     Unit ->
       case ty of
-        Type -> pure usages
-        _ -> Left $ ExpectedType $ names <$> ty
+        Type -> pure $ env ^. envUsages
+        _ -> Left $ ExpectedType $ env ^. envNames <$> ty
     MkUnit ->
       case ty of
-        Unit -> pure usages
-        _ -> Left $ ExpectedUnit $ names <$> ty
+        Unit -> pure $ env ^. envUsages
+        _ -> Left $ ExpectedUnit $ env ^. envNames <$> ty
     Case a bs -> do
-      (usages', usage, aTy) <- infer depth names ctx usages a u
-      checkBranches depth names ctx usages' (a, usage, aTy) bs u ty
+      (usages', usage, aTy) <- infer env a u
+      checkBranches (env & envUsages .~ usages') (a, usage, aTy) bs u ty
     _ -> do
-      (usages', _, tmTy) <- infer depth names ctx usages tm u
+      (usages', _, tmTy) <- infer env tm u
       if tmTy == ty
         then pure usages'
-        else Left $ TypeMismatch (names <$> ty) (names <$> tmTy)
+        else Left $ TypeMismatch (env ^. envNames <$> ty) (env ^. envNames <$> tmTy)
 
 infer ::
   (Ord x, Ord a) =>
@@ -513,41 +511,49 @@ infer ::
   Usage ->
   Either (TypeError l a) (x -> Maybe Usage, Usage, Ty a l x)
 infer env tm u =
-  over (mapped._3) (eval depth) $ -- post compute
+  over (mapped._3) (eval $ env ^. envDepth) $ -- post compute
   case tm of
     Var a -> do
-      aTy <- maybe (Left . NotInScope $ names a) (pure . _entryType) $ ctx a
-      u' <- maybe (Left . NotInScope $ names a) pure $ usages a
+      aTy <-
+        maybe
+          (Left . NotInScope $ view envNames env a)
+          (pure . _entryType)
+          (view envTypes env a)
+      u' <-
+        maybe
+          (Left . NotInScope $ view envNames env a)
+          pure
+          (view envUsages env a)
       case (u, u') of
-        (Zero, _) -> pure (usages, u', aTy)
-        (One, Zero) -> Left $ UsingErased $ names a
+        (Zero, _) -> pure (env ^. envUsages, u', aTy)
+        (One, Zero) -> Left $ UsingErased $ view envNames env a
         (One, One) ->
-          pure (\x -> Zero <$ guard (x == a) <|> usages x, u', aTy)
-        (One, Many) -> pure (usages, u', aTy)
-        (Many, Zero) -> Left $ UsingErased $ names a
+          pure (\x -> Zero <$ guard (x == a) <|> view envUsages env x, u', aTy)
+        (One, Many) -> pure (env ^. envUsages, u', aTy)
+        (Many, Zero) -> Left $ UsingErased $ view envNames env a
         (Many, One) ->
-          pure (\x -> Zero <$ guard (x == a) <|> usages x, u', aTy)
-        (Many, Many) -> pure (usages, u', aTy)
+          pure (\x -> Zero <$ guard (x == a) <|> view envUsages env x, u', aTy)
+        (Many, Many) -> pure (env ^. envUsages, u', aTy)
     Ann a u' b -> do
-      _ <- checkZero depth names ctx usages b Type
-      usages' <- check depth names ctx usages a u' b
+      _ <- checkZero env b Type
+      usages' <- check env a u' b
       pure (usages', u', b)
     App a b -> do
-      (usages', aUsage, aTy) <- infer depth names ctx usages a u
+      (usages', aUsage, aTy) <- infer env a u
       case aTy of
         Pi u' _ s t -> do
           let u'' = times u' aUsage
-          usages'' <- check depth names ctx usages' b u'' s
+          usages'' <- check (env & envUsages .~ usages') b u'' s
           pure (usages'', aUsage, instantiate1 (Ann b u'' s) t)
-        _ -> Left $ ExpectedPi $ names <$> aTy
+        _ -> Left $ ExpectedPi $ env ^. envNames <$> aTy
     Fst a -> do
-      (usages', aUsage, aTy) <- infer depth names ctx usages a u
+      (usages', aUsage, aTy) <- infer env a u
       case aTy of
         With _ s _ -> pure (usages', aUsage, s)
-        _ -> Left $ ExpectedWith $ names <$> aTy
+        _ -> Left $ ExpectedWith $ env ^. envNames <$> aTy
     Snd a -> do
-      (usages', aUsage, aTy) <- infer depth names ctx usages a u
+      (usages', aUsage, aTy) <- infer env a u
       case aTy of
         With _ _ t -> pure (usages', aUsage, instantiate1 (Fst a) t)
-        _ -> Left $ ExpectedWith $ names <$> aTy
-    _ -> Left $ Can'tInfer $ names <$> tm
+        _ -> Left $ ExpectedWith $ env ^. envNames <$> aTy
+    _ -> Left $ Can'tInfer $ env ^. envNames <$> tm

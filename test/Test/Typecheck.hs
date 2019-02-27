@@ -22,7 +22,7 @@ doCheck ::
   Usage ->
   Ty String String String ->
   Either (TypeError String String) (String -> Maybe Usage)
-doCheck = check id id
+doCheck a b = check (Env id id a b)
 
 typecheckSpec :: Spec
 typecheckSpec =
