@@ -12,7 +12,9 @@ import Control.Lens.Getter (view)
 import Control.Lens.Prism (_Right)
 import Control.Lens.Tuple (_3)
 import Data.Bool (bool)
+import Data.List (intersperse)
 import Data.Semiring (times)
+import Data.String (IsString)
 import Data.Text (Text)
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..), Doc)
 
@@ -52,6 +54,7 @@ data HsTy a
   | HsArr (HsTy a) (HsTy a)
 data HsDef a
   = HsDefData Text [a] [([a], Text, [HsTy a])]
+  | HsDefGADT Text [a] [(Text, [HsTy a], HsTy a)]
   | HsDefValue a (HsTm a)
 
 instance Pretty a => Pretty (HsPat a) where
@@ -183,8 +186,8 @@ instance Pretty a => Pretty (HsTy a) where
       HsTyCtor a -> Pretty.text $ Text.unpack a
 
 instance Pretty a => Pretty (HsDef a) where
-  pretty d =
-    case d of
+  pretty def =
+    case def of
       HsDefData a b c ->
         Pretty.hsep ([Pretty.text "data", Pretty.text $ Text.unpack a] <> fmap pretty b) <>
         (if null c then mempty else Pretty.space <> Pretty.char '=') Pretty.<$>
@@ -209,13 +212,37 @@ instance Pretty a => Pretty (HsDef a) where
       HsDefValue a b ->
         Pretty.hsep [pretty a, Pretty.char '='] Pretty.<$>
         Pretty.indent 2 (pretty b)
+      HsDefGADT a b c ->
+        Pretty.hsep
+          (Pretty.text "data" :
+           Pretty.text (Text.unpack a) :
+           fmap pretty b <>
+           [Pretty.text "where"]) Pretty.<$>
+        Pretty.indent 2
+        (Pretty.vsep $
+         fmap
+           (\(d, e, f) ->
+              Pretty.hsep $
+              Pretty.text (Text.unpack d) :
+              Pretty.text "::" :
+              intersperse (Pretty.text "->") (fmap pretty e) <>
+              [Pretty.text "->", pretty f])
+           c)
 
-prelude :: [HsDef Text]
+prelude :: IsString a => [HsDef a]
 prelude =
-  [ HsDefData "TensorE" ["f"]
-    [(["a"], "TensorE", [HsTyApp HsTyProxy (HsTyVar "a"), HsTyApp (HsTyVar "f") (HsTyVar "a")])]
-  , HsDefData "TensorP" ["a", "b"]
-    [([], "TensorP", [HsTyVar "a", HsTyVar "b"])]
+  [ HsDefGADT "TensorE" ["f"]
+    [ ( "TensorE"
+      , [HsTyApp HsTyProxy (HsTyVar "a"), HsTyApp (HsTyVar "f") (HsTyVar "a")]
+      , HsTyApp (HsTyCtor "TensorE") (HsTyVar "f")
+      )
+    ]
+  , HsDefGADT "TensorP" ["a", "b"]
+    [ ( "TensorP"
+      , [HsTyVar "a", HsTyVar "b"]
+      , HsTyApp (HsTyApp (HsTyCtor "TensorP") (HsTyVar "a")) (HsTyVar "b")
+      )
+    ]
   , HsDefData "WithE" ["f"]
     [(["a"], "WithE", [HsTyApp HsTyProxy (HsTyVar "a"), HsTyApp (HsTyVar "f") (HsTyVar "a")])]
   , HsDefData "WithP" ["a", "b"]
