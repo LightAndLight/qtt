@@ -220,6 +220,10 @@ prelude =
     [(["a"], "WithE", [HsTyApp HsTyProxy (HsTyVar "a"), HsTyApp (HsTyVar "f") (HsTyVar "a")])]
   , HsDefData "WithP" ["a", "b"]
     [([], "WithP", [HsTyVar "a", HsTyVar "b"])]
+  , HsDefValue "fst" $
+    HsTmLam (HsPatCtor "WithP" [HsPatVar "a", HsPatWild]) (HsTmVar "a")
+  , HsDefValue "snd" $
+    HsTmLam (HsPatCtor "WithP" [HsPatWild, HsPatVar "b"]) (HsTmVar "b")
   ]
 
 extractType :: forall a l x. (x -> HsTy a) -> Term a l x -> Maybe (HsTy a)
