@@ -55,6 +55,19 @@ fstTm =
   lam "x" $ unpackTensor ("a", "b") (pure "x") $
   pure "a"
 
+idfTy :: Term String String String
+idfTy =
+  forall_ ("F", arr Type Type) $
+  forall_ ("A", Type) $
+  pi ("x", App (pure "F") (pure "A")) $
+  App (pure "F") (pure "A")
+
+idfTm :: Term String String String
+idfTm =
+  lam "F" $ lam "A" $
+  lam "x" $
+  pure "x"
+
 extractSpec :: Spec
 extractSpec =
   describe "extraction" $ do
@@ -64,3 +77,5 @@ extractSpec =
       doExtractTerm (lam "A" $ App (Ann constTm Many constTy) (pure "A")) constTy
     it "fst" $
       doExtractTerm fstTm fstTy
+    it "idf" $
+      doExtractTerm idfTm idfTy
