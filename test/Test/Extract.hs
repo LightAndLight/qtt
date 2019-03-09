@@ -3,7 +3,7 @@ module Test.Extract where
 import Prelude hiding (pi)
 
 import Test.Hspec
-import Text.PrettyPrint.ANSI.Leijen (Doc, pretty)
+import Text.PrettyPrint.ANSI.Leijen (Pretty, Doc, pretty)
 
 import Extract
 import Syntax
@@ -13,15 +13,20 @@ doPrettyHs :: HsTm String -> Doc
 doPrettyHs = pretty
 
 doExtractTerm ::
-  Ord a =>
+  (Ord a, Pretty a) =>
   Term a l a ->
   Ty a l a ->
-  Maybe (HsTm a)
-doExtractTerm tm =
-  extractTerm
-    (Env id id (const Nothing) (const Nothing))
-    tm
-    Many
+  Expectation
+doExtractTerm tm ty =
+  maybe (expectationFailure "extract term Nothing") (print . pretty) mtm
+  where
+    mtm =
+      extractTerm
+        HsTyVar
+        (Env id id (const Nothing) (const Nothing))
+        tm
+        Many
+        ty
 
 constTy :: Term String String String
 constTy =
@@ -37,11 +42,25 @@ constTm =
   lam "x" $ lam "y" $
   pure "x"
 
+fstTy :: Term String String String
+fstTy =
+  forall_ ("A", Type) $
+  forall_ ("B", Type) $
+  arr (tensor ("_", pure "A") (pure "B")) $
+  pure "A"
+
+fstTm :: Term String String String
+fstTm =
+  lam "A" $ lam "B" $
+  lam "x" $ unpackTensor ("a", "b") (pure "x") $
+  pure "a"
+
 extractSpec :: Spec
 extractSpec =
   describe "extraction" $ do
-    it "const" $ do
-      print . maybe mempty pretty $ doExtractTerm constTm constTy
-    it "const eta 1" $ do
-      print . maybe mempty pretty $
-        doExtractTerm (lam "A" $ App (Ann constTm Many constTy) (pure "A")) constTy
+    it "const" $
+      doExtractTerm constTm constTy
+    it "const eta 1" $
+      doExtractTerm (lam "A" $ App (Ann constTm Many constTy) (pure "A")) constTy
+    it "fst" $
+      doExtractTerm fstTm fstTy

@@ -28,6 +28,7 @@ library
                      , ansi-wl-pprint
                      , bound
                      , comonad
+                     , concurrent-supply
                      , containers
                      , deriving-compat
                      , lens
