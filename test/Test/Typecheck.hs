@@ -598,7 +598,7 @@ typecheckSpec =
              ])
             Many
             Type)
-    it "32) Pair : Type -> Type -> Type, MkPair : (A : Type) -> (B : Type) -> (x : A) -> (y : B) -> Pair A B, A :0 Type, B :0 Type, x :0 Pair A B  |- (case x of { MkPair A B a b => a }) :w A" $ do
+    it "32) Pair : Type -> Type -> Type, MkPair : (A : Type) -> (B : Type) -> (x : A) -> (y : B) -> Pair A B, A :0 Type, B :0 Type, x :w Pair A B  |- (case x of { MkPair A B a b => a }) :w A" $ do
       let
         mkPairType =
           forall_ ("A", Type) $

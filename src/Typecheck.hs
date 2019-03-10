@@ -539,21 +539,21 @@ infer env tm u =
       usages' <- check env a u' b
       pure (usages', u', b)
     App a b -> do
-      (usages', aUsage, aTy) <- infer env a u
+      (usages', _, aTy) <- infer env a u
       case aTy of
         Pi u' _ s t -> do
-          let u'' = times u' aUsage
+          let u'' = times u u'
           usages'' <- check (env & envUsages .~ usages') b u'' s
-          pure (usages'', aUsage, instantiate1 (Ann b u'' s) t)
+          pure (usages'', u, instantiate1 (Ann b u'' s) t)
         _ -> Left $ ExpectedPi $ env ^. envNames <$> aTy
     Fst a -> do
-      (usages', aUsage, aTy) <- infer env a u
+      (usages', _, aTy) <- infer env a u
       case aTy of
-        With _ s _ -> pure (usages', aUsage, s)
+        With _ s _ -> pure (usages', u, s)
         _ -> Left $ ExpectedWith $ env ^. envNames <$> aTy
     Snd a -> do
-      (usages', aUsage, aTy) <- infer env a u
+      (usages', _, aTy) <- infer env a u
       case aTy of
-        With _ _ t -> pure (usages', aUsage, instantiate1 (Fst a) t)
+        With _ _ t -> pure (usages', u, instantiate1 (Fst a) t)
         _ -> Left $ ExpectedWith $ env ^. envNames <$> aTy
     _ -> Left $ Can'tInfer $ env ^. envNames <$> tm
