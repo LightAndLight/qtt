@@ -45,6 +45,7 @@ data HsTm a
   | HsTmAnn (HsTm a) (HsTy a)
 data HsTy a
   = HsTyUnit
+  | HsTyVoid
   | HsTyProxy
   | HsTyVar a
   | HsTyApp (HsTy a) (HsTy a)
@@ -193,6 +194,7 @@ prettyHsTy pvar ty =
       , prettyHsTy pvar b
       ]
     HsTyUnit -> Pretty.text "()"
+    HsTyVoid -> Pretty.text "Void"
     HsTyProxy -> Pretty.text "Proxy#"
     HsTyVar a -> pvar a
     HsTyApp a b ->
@@ -317,7 +319,7 @@ extractType env depth ty =
           Type ->
             case u of
               Zero ->
-                HsArr (HsTyApp HsTyProxy $ maybe HsTyUnit HsTyVar a) <$>
+                HsArr (HsTyApp HsTyProxy $ maybe HsTyVoid HsTyVar a) <$>
                 extractType
                   (deeperEnv
                      Name.name
@@ -335,10 +337,10 @@ extractType env depth ty =
                    entry
                    (const $ Just Zero)
                    env)
-                (unvar (const HsTyUnit) depth)
+                (unvar (const HsTyVoid) depth)
                 (fromScope c)
             case u of
-              Zero -> pure $ HsArr (HsTyApp HsTyProxy HsTyUnit) c'
+              Zero -> pure $ HsArr (HsTyApp HsTyProxy HsTyVoid) c'
               _ ->
                 HsArr <$>
                 extractType env depth b <*>
@@ -355,7 +357,7 @@ extractType env depth ty =
           else
             HsTyApp <$>
             extractType env depth a <*>
-            pure HsTyUnit
+            pure HsTyVoid
         _ ->
           Left . TypeError $
           ExpectedPi (view envNames env <$> appty)
