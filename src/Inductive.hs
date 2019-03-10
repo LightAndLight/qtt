@@ -19,7 +19,7 @@ data Inductive n l a
   = Inductive
   { _indTypeName :: a
   , _indTypeType :: Term n l a
-  , _indConstructors :: Map a (Term n l a)
+  , _indConstructors :: Map n (Term n l a)
   } deriving (Eq, Show)
 
 data InductiveError l a
@@ -79,3 +79,12 @@ checkInductive ctx usages ind = snd $ runWriter go
         tell [IndIncorrectType n]
       unless (_indTypeName ind `strictlyPositiveIn` ty) $
         tell [IndNotStrictlyPositive n]
+
+inductiveEntry :: Ord a => Inductive a l a -> Map a (Usage, Entry a l a)
+inductiveEntry ind =
+  Map.singleton
+    (_indTypeName ind)
+    ( Many
+    , InductiveEntry (_indTypeType ind) (_indConstructors ind)
+    ) <>
+  fmap (\x -> (Many, CtorEntry x)) (_indConstructors ind)

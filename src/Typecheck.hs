@@ -46,6 +46,15 @@ data Env a l x
   }
 makeLenses ''Env
 
+toEnv :: Ord a => Map a (Usage, Entry a l a) -> Env a l a
+toEnv m = Env id id (\a -> snd <$> Map.lookup a m) (\a -> fst <$> Map.lookup a m)
+
+extendEnv :: Ord a => Map a (Usage, Entry a l a) -> Env a l a -> Env a l a
+extendEnv m (Env a b c d) =
+  Env a b
+    (\x -> c x <|> fmap snd (Map.lookup x m))
+    (\x -> d x <|> fmap fst (Map.lookup x m))
+
 pickBranch ::
   Eq x =>
   (a -> x) ->
@@ -55,7 +64,7 @@ pickBranch ::
   Term a l x
 pickBranch depth f xs (BranchImpossible _ :| bs) =
   case bs of
-    [] -> error "pickBranch: no brach to take"
+    [] -> error "pickBranch: no branch to take"
     bb:bbs -> pickBranch depth f xs (bb :| bbs)
 pickBranch depth f xs (Branch p v :| bs) =
   case p of
@@ -539,12 +548,12 @@ infer env tm u =
       usages' <- check env a u' b
       pure (usages', u', b)
     App a b -> do
-      (usages', aUsage, aTy) <- infer env a u
+      (usages', _, aTy) <- infer env a u
       case aTy of
         Pi u' _ s t -> do
-          let u'' = times u' aUsage
+          let u'' = times u' u
           usages'' <- check (env & envUsages .~ usages') b u'' s
-          pure (usages'', aUsage, instantiate1 (Ann b u'' s) t)
+          pure (usages'', u'', instantiate1 (Ann b u'' s) t)
         _ -> Left $ ExpectedPi $ env ^. envNames <$> aTy
     Fst a -> do
       (usages', aUsage, aTy) <- infer env a u

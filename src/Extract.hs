@@ -5,25 +5,24 @@ module Extract where
 import Bound.Name (instantiate1Name)
 import Bound.Scope (Scope, fromScope)
 import Bound.Var (Var(..), unvar)
-import Control.Applicative (empty)
 import Control.Comonad (extract)
-import Control.Lens.Fold ((^?))
 import Control.Lens.Getter (view)
-import Control.Lens.Prism (_Right)
-import Control.Lens.Tuple (_3)
+import Data.Bifunctor (first)
 import Data.Bool (bool)
-import Data.List (intersperse)
 import Data.Semiring (times)
 import Data.String (IsString)
 import Data.Text (Text)
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..), Doc)
 
 import qualified Bound.Name as Name
+import qualified Data.Map as Map
 import qualified Data.Text as Text
 import qualified Text.PrettyPrint.ANSI.Leijen as Pretty
 
 import Context
+import Inductive
 import Syntax
+import TypeError
 import Typecheck
 
 data HsPat a
@@ -52,239 +51,355 @@ data HsTy a
   | HsTyForall a (HsTy a)
   | HsTyCtor Text
   | HsArr (HsTy a) (HsTy a)
-data HsDef a
-  = HsDefData Text [a] [([a], Text, [HsTy a])]
-  | HsDefGADT Text [a] [(Text, [HsTy a], HsTy a)]
+data HsKind = HsKindStar | HsKindArr HsKind HsKind
+data HsDef n a
+  = HsDefGADT n HsKind [(n, HsTy a)]
   | HsDefValue a (HsTm a)
 
+karr_ :: HsKind -> HsKind -> HsKind
+karr_ = HsKindArr
+
+kstar_ :: HsKind
+kstar_ = HsKindStar
+
+instance Pretty HsKind where
+  pretty HsKindStar = Pretty.char '*'
+  pretty (HsKindArr a b) =
+    Pretty.hsep
+    [ (case a of
+         HsKindArr{} -> Pretty.parens
+         _ -> id)
+      (pretty a)
+    , Pretty.text "->"
+    , pretty b
+    ]
+
 instance Pretty a => Pretty (HsPat a) where
-  pretty pat =
-    case pat of
-      HsPatWild -> Pretty.char '_'
-      HsPatVar a -> pretty a
-      HsPatCtor a b ->
-        Pretty.hsep $
-        Pretty.text (Text.unpack a) :
+  pretty = prettyHsPat pretty
+
+prettyHsPat :: (a -> Doc) -> HsPat a -> Doc
+prettyHsPat pvar pat =
+  case pat of
+    HsPatWild -> Pretty.char '_'
+    HsPatVar a -> pvar a
+    HsPatCtor a b ->
+      Pretty.hsep $
+      Pretty.text (Text.unpack a) :
+      fmap
+        (\x ->
+            (case x of
+              HsPatCtor{} -> Pretty.parens
+              HsPatAnn{} -> Pretty.parens
+              _ -> id)
+            (prettyHsPat pvar x))
+        b
+    HsPatAnn a b ->
+      Pretty.hsep
+      [prettyHsPat pvar a, Pretty.text "::", prettyHsTy pvar b]
+    HsPatProxy -> Pretty.text "proxy#"
+
+prettyHsTm :: (a -> Doc) -> HsTm a -> Doc
+prettyHsTm pvar tm =
+  case tm of
+    HsTmUnit -> Pretty.text "()"
+    HsTmFst -> Pretty.text "fst"
+    HsTmSnd -> Pretty.text "snd"
+    HsTmPair a b ->
+      Pretty.parens $
+      prettyHsTm pvar a <> Pretty.comma <> Pretty.space <>
+      prettyHsTm pvar b
+    HsTmApp a b ->
+      Pretty.hsep
+      [ (case a of
+            HsTmLet{} -> Pretty.parens
+            HsTmLam{} -> Pretty.parens
+            HsTmAnn{} -> Pretty.parens
+            _ -> id)
+        (prettyHsTm pvar a)
+      , (case b of
+            HsTmApp{} -> Pretty.parens
+            HsTmLet{} -> Pretty.parens
+            HsTmLam{} -> Pretty.parens
+            HsTmAnn{} -> Pretty.parens
+            _ -> id)
+        (prettyHsTm pvar b)
+      ]
+    HsTmLet a b c ->
+      Pretty.hsep
+      [ Pretty.text "let"
+      , prettyHsPat pvar a
+      , Pretty.char '='
+      , (case b of
+            HsTmLet{} -> Pretty.parens
+            _ -> id)
+        (prettyHsTm pvar b)
+      , Pretty.text "in"
+      ] Pretty.<$>
+      prettyHsTm pvar c
+    HsTmVar a -> pvar a
+    HsTmLam a b ->
+      Pretty.char '\\' <>
+      Pretty.hsep
+      [ (case a of
+            HsPatCtor{} -> Pretty.parens
+            HsPatAnn{} -> Pretty.parens
+            _ -> id)
+        (prettyHsPat pvar a)
+      , Pretty.text "->"
+      , prettyHsTm pvar b
+      ]
+    HsTmProxy -> Pretty.text "proxy#"
+    HsTmCase a b ->
+      Pretty.hsep
+      [ Pretty.text "case"
+      , prettyHsTm pvar a
+      , Pretty.text "of"
+      ] Pretty.<$>
+      Pretty.indent 2
+      (Pretty.vsep $
         fmap
-          (\x ->
-             (case x of
-                HsPatCtor{} -> Pretty.parens
-                HsPatAnn{} -> Pretty.parens
-                _ -> id)
-             (pretty x))
-          b
-      HsPatAnn a b -> Pretty.hsep [pretty a, Pretty.text "::", pretty b]
-      HsPatProxy -> Pretty.text "proxy#"
+          (\(x, y) ->
+            Pretty.hsep
+            [ prettyHsPat pvar x
+            , Pretty.text "->"
+            , prettyHsTm pvar y
+            ])
+          b)
+    HsTmAnn a b ->
+      Pretty.hsep
+      [ (case a of
+            HsTmLam{} -> Pretty.parens
+            HsTmCase{} -> Pretty.parens
+            HsTmLet{} -> Pretty.parens
+            _ -> id)
+        (prettyHsTm pvar a)
+      , Pretty.text "::"
+      , prettyHsTy pvar b
+      ]
 
 instance Pretty a => Pretty (HsTm a) where
-  pretty tm =
-    case tm of
-      HsTmUnit -> Pretty.text "()"
-      HsTmFst -> Pretty.text "fst"
-      HsTmSnd -> Pretty.text "snd"
-      HsTmPair a b ->
-        Pretty.parens $
-        pretty a <> Pretty.comma <> Pretty.space <> pretty b
-      HsTmApp a b ->
-        Pretty.hsep
-        [ (case a of
-             HsTmLet{} -> Pretty.parens
-             HsTmLam{} -> Pretty.parens
-             HsTmAnn{} -> Pretty.parens
-             _ -> id)
-          (pretty a)
-        , (case b of
-             HsTmApp{} -> Pretty.parens
-             HsTmLet{} -> Pretty.parens
-             HsTmLam{} -> Pretty.parens
-             HsTmAnn{} -> Pretty.parens
-             _ -> id)
-          (pretty b)
-        ]
-      HsTmLet a b c ->
-        Pretty.hsep
-        [ Pretty.text "let"
-        , pretty a
-        , Pretty.char '='
-        , (case b of
-             HsTmLet{} -> Pretty.parens
-             _ -> id)
-          (pretty b)
-        , Pretty.text "in"
-        ] Pretty.<$>
-        pretty c
-      HsTmVar a -> pretty a
-      HsTmLam a b ->
-        Pretty.char '\\' <>
-        Pretty.hsep
-        [ (case a of
-             HsPatCtor{} -> Pretty.parens
-             HsPatAnn{} -> Pretty.parens
-             _ -> id)
-          (pretty a)
-        , Pretty.text "->"
-        , pretty b
-        ]
-      HsTmProxy -> Pretty.text "proxy#"
-      HsTmCase a b ->
-        Pretty.hsep
-        [ Pretty.text "case"
-        , pretty a
-        , Pretty.text "of"
-        ] Pretty.<$>
-        Pretty.indent 2
-        (Pretty.vsep $
-         fmap
-           (\(x, y) ->
-              Pretty.hsep [pretty x, Pretty.text "->", pretty y])
-           b)
-      HsTmAnn a b ->
-        Pretty.hsep
-        [ (case a of
-             HsTmLam{} -> Pretty.parens
-             HsTmCase{} -> Pretty.parens
-             HsTmLet{} -> Pretty.parens
-             _ -> id)
-          (pretty a)
-        , Pretty.text "::"
-        , pretty b
-        ]
+  pretty = prettyHsTm pretty
+
+prettyHsTy :: (a -> Doc) -> HsTy a -> Doc
+prettyHsTy pvar ty =
+  case ty of
+    HsArr a b ->
+      Pretty.hsep
+      [ (case a of
+            HsArr{} -> Pretty.parens
+            _ -> id)
+        (prettyHsTy pvar a)
+      , Pretty.text "->"
+      , prettyHsTy pvar b
+      ]
+    HsTyUnit -> Pretty.text "()"
+    HsTyProxy -> Pretty.text "Proxy#"
+    HsTyVar a -> pvar a
+    HsTyApp a b ->
+      Pretty.hsep
+      [ (case a of
+            HsTyForall{} -> Pretty.parens
+            _ -> id)
+        (prettyHsTy pvar a)
+      , (case b of
+            HsTyApp{} -> Pretty.parens
+            HsTyForall{} -> Pretty.parens
+            _ -> id)
+        (prettyHsTy pvar b)
+      ]
+    HsTyForall a b ->
+      Pretty.hsep
+      [ Pretty.text "forall"
+      , pvar a <> Pretty.dot
+      , prettyHsTy pvar b
+      ]
+    HsTyCtor a -> Pretty.text $ Text.unpack a
 
 instance Pretty a => Pretty (HsTy a) where
-  pretty ty =
-    case ty of
-      HsArr a b ->
-        Pretty.hsep
-        [ (case a of
-             HsArr{} -> Pretty.parens
-             _ -> id)
-          (pretty a)
-        , Pretty.text "->"
+  pretty = prettyHsTy pretty
+
+prettyHsDef :: (n -> Doc) -> (a -> Doc) -> HsDef n a -> Doc
+prettyHsDef pname pvar def =
+  case def of
+    HsDefValue a b ->
+      Pretty.hsep [pvar a, Pretty.char '='] Pretty.<$>
+      Pretty.indent 2 (prettyHsTm pvar b)
+    HsDefGADT a b c ->
+      Pretty.hsep
+        [ Pretty.text "data"
+        , pname a
+        , Pretty.text "::"
         , pretty b
-        ]
-      HsTyUnit -> Pretty.text "()"
-      HsTyProxy -> Pretty.text "Proxy#"
-      HsTyVar a -> pretty a
-      HsTyApp a b ->
-        Pretty.hsep
-        [ (case a of
-             HsTyForall{} -> Pretty.parens
-             _ -> id)
-          (pretty a)
-        , (case b of
-             HsTyApp{} -> Pretty.parens
-             HsTyForall{} -> Pretty.parens
-             _ -> id)
-          (pretty b)
-        ]
-      HsTyForall a b ->
-        Pretty.hsep
-        [ Pretty.text "forall"
-        , pretty a <> Pretty.dot
-        , pretty b
-        ]
-      HsTyCtor a -> Pretty.text $ Text.unpack a
+        , Pretty.text "where"
+        ] Pretty.<$>
+      Pretty.indent 2
+      (Pretty.vsep $
+        fmap
+          (\(d, e) ->
+            Pretty.hsep
+            [ pname d
+            , Pretty.text "::"
+            , prettyHsTy pvar e
+            ])
+          c)
 
-instance Pretty a => Pretty (HsDef a) where
-  pretty def =
-    case def of
-      HsDefData a b c ->
-        Pretty.hsep ([Pretty.text "data", Pretty.text $ Text.unpack a] <> fmap pretty b) <>
-        (if null c then mempty else Pretty.space <> Pretty.char '=') Pretty.<$>
-        Pretty.indent 2 (Pretty.vsep $ prettyBranches c)
-        where
-          prettyBranch :: ([a], Text, [HsTy a]) -> Doc
-          prettyBranch (exs, ctor, args) =
-            (if null exs
-             then mempty
-             else
-               Pretty.hsep ([Pretty.text "forall"] <> fmap pretty exs) <>
-               Pretty.char '.' <>
-               Pretty.space) <>
-            pretty (foldl HsTyApp (HsTyCtor ctor) args)
+instance (Pretty n, Pretty a) => Pretty (HsDef n a) where
+  pretty = prettyHsDef pretty pretty
 
-          prettyBranches :: [([a], Text, [HsTy a])] -> [Doc]
-          prettyBranches [] = []
-          prettyBranches [br] = [prettyBranch br]
-          prettyBranches (br : rest) =
-            Pretty.hsep [prettyBranch br, Pretty.char '|'] :
-            prettyBranches rest
-      HsDefValue a b ->
-        Pretty.hsep [pretty a, Pretty.char '='] Pretty.<$>
-        Pretty.indent 2 (pretty b)
-      HsDefGADT a b c ->
-        Pretty.hsep
-          (Pretty.text "data" :
-           Pretty.text (Text.unpack a) :
-           fmap pretty b <>
-           [Pretty.text "where"]) Pretty.<$>
-        Pretty.indent 2
-        (Pretty.vsep $
-         fmap
-           (\(d, e, f) ->
-              Pretty.hsep $
-              Pretty.text (Text.unpack d) :
-              Pretty.text "::" :
-              intersperse (Pretty.text "->") (fmap pretty e) <>
-              [Pretty.text "->", pretty f])
-           c)
-
-prelude :: IsString a => [HsDef a]
+prelude :: (IsString n, IsString a) => [HsDef n a]
 prelude =
-  [ HsDefGADT "TensorE" ["f"]
+  [ HsDefGADT "TensorE" (karr_ (karr_ kstar_ kstar_) kstar_)
     [ ( "TensorE"
-      , [HsTyApp HsTyProxy (HsTyVar "a"), HsTyApp (HsTyVar "f") (HsTyVar "a")]
-      , HsTyApp (HsTyCtor "TensorE") (HsTyVar "f")
+      , HsArr (HsTyApp HsTyProxy (HsTyVar "a")) $
+        HsArr (HsTyApp (HsTyVar "f") (HsTyVar "a")) $
+        HsTyApp (HsTyCtor "TensorE") (HsTyVar "f")
       )
     ]
-  , HsDefGADT "TensorP" ["a", "b"]
+  , HsDefGADT "TensorP" (karr_ kstar_ $ karr_ kstar_ kstar_)
     [ ( "TensorP"
-      , [HsTyVar "a", HsTyVar "b"]
-      , HsTyApp (HsTyApp (HsTyCtor "TensorP") (HsTyVar "a")) (HsTyVar "b")
+      , HsArr (HsTyVar "a") $
+        HsArr (HsTyVar "b") $
+        HsTyApp (HsTyApp (HsTyCtor "TensorP") (HsTyVar "a")) (HsTyVar "b")
       )
     ]
-  , HsDefData "WithE" ["f"]
-    [(["a"], "WithE", [HsTyApp HsTyProxy (HsTyVar "a"), HsTyApp (HsTyVar "f") (HsTyVar "a")])]
-  , HsDefData "WithP" ["a", "b"]
-    [([], "WithP", [HsTyVar "a", HsTyVar "b"])]
+  , HsDefGADT "WithE" (karr_ (karr_ kstar_ kstar_) kstar_)
+    [ ( "WithE"
+      , HsArr (HsTyApp HsTyProxy (HsTyVar "a")) $
+        HsArr (HsTyApp (HsTyVar "f") (HsTyVar "a")) $
+        HsTyApp (HsTyCtor "WithE") (HsTyVar "f")
+      )
+    ]
+  , HsDefGADT "WithP" (karr_ kstar_ $ karr_ kstar_ kstar_)
+    [ ( "WithP"
+      , HsArr (HsTyVar "a") $
+        HsArr (HsTyVar "b") $
+        HsTyApp (HsTyApp (HsTyCtor "WithP") (HsTyVar "a")) (HsTyVar "b")
+      )
+    ]
   , HsDefValue "fst" $
     HsTmLam (HsPatCtor "WithP" [HsPatVar "a", HsPatWild]) (HsTmVar "a")
   , HsDefValue "snd" $
     HsTmLam (HsPatCtor "WithP" [HsPatWild, HsPatVar "b"]) (HsTmVar "b")
   ]
 
-extractType :: forall a l x. (x -> HsTy a) -> Term a l x -> Maybe (HsTy a)
-extractType depth ty =
+data Sort = SortTerm | SortType | SortKind
+  deriving Show
+
+data ExtractError l a
+  = TypeError (TypeError l a)
+  | SortMismatch Sort Sort (Term a l a)
+  deriving Show
+
+extractType ::
+  forall a l x.
+  (Ord a, Ord x) =>
+  Env a l x ->
+  (x -> HsTy a) ->
+  Term a l x ->
+  Either (ExtractError l a) (HsTy a)
+extractType env depth ty =
   case ty of
     Var a -> pure $ depth a
-    Ann a _ _ -> extractType depth a
-    Type -> empty
-
-    Lam{} -> empty
-    Pi _ a b c ->
-      HsArr (HsTyApp HsTyProxy $ maybe HsTyUnit HsTyVar a) <$>
-      case b of
-        Type -> extractType (unvar (HsTyVar . Name.name) depth) (fromScope c)
-        _ -> extractType (unvar (const $ HsTyUnit) depth) (fromScope c)
-    App a b -> HsTyApp <$> extractType depth a <*> extractType depth b
-
-    MkTensor{} -> empty
+    Ann a _ _ -> extractType env depth a
+    Type ->
+      Left .
+      SortMismatch SortType SortKind $
+      fmap (view envNames env) ty
+    Lam{} ->
+      Left .
+      SortMismatch SortType SortTerm $
+      fmap (view envNames env) ty
+    Pi u a b c ->
+      let
+        entry = const $ Just $ BindingEntry b
+      in
+        case b of
+          Type ->
+            case u of
+              Zero ->
+                HsArr (HsTyApp HsTyProxy $ maybe HsTyUnit HsTyVar a) <$>
+                extractType
+                  (deeperEnv
+                     Name.name
+                     entry
+                     (const $ Just Zero)
+                     env)
+                  (unvar (HsTyVar . Name.name) depth)
+                  (fromScope c)
+              _ -> error "typerep not supported"
+          _ -> do
+            c' <-
+              extractType
+                (deeperEnv
+                   Name.name
+                   entry
+                   (const $ Just Zero)
+                   env)
+                (unvar (const HsTyUnit) depth)
+                (fromScope c)
+            case u of
+              Zero -> pure $ HsArr (HsTyApp HsTyProxy HsTyUnit) c'
+              _ ->
+                HsArr <$>
+                extractType env depth b <*>
+                pure c'
+    App a b -> do
+      (_, _, appty) <- first TypeError $ infer env a Zero
+      case appty of
+        Pi _ _ s _ ->
+          if isType s
+          then
+            HsTyApp <$>
+            extractType env depth a <*>
+            extractType env depth b
+          else
+            HsTyApp <$>
+            extractType env depth a <*>
+            pure HsTyUnit
+        _ ->
+          Left . TypeError $
+          ExpectedPi (view envNames env <$> appty)
+    MkTensor{} ->
+      Left .
+      SortMismatch SortType SortTerm $
+      fmap (view envNames env) ty
     Tensor _ a b -> genProduct "Tensor" a b
-    UnpackTensor{} -> empty
-
-    MkWith{} -> empty
+    UnpackTensor{} ->
+      Left .
+      SortMismatch SortType SortTerm $
+      fmap (view envNames env) ty
+    MkWith{} ->
+      Left .
+      SortMismatch SortType SortTerm $
+      fmap (view envNames env) ty
     With _ a b -> genProduct "With" a b
-    Fst{} -> empty
-    Snd{} -> empty
+    Fst{} ->
+      Left .
+      SortMismatch SortType SortTerm $
+      fmap (view envNames env) ty
+    Snd{} ->
+      Left .
+      SortMismatch SortType SortTerm $
+      fmap (view envNames env) ty
 
     Unit -> pure HsTyUnit
-    MkUnit -> empty
+    MkUnit ->
+      Left .
+      SortMismatch SortType SortTerm $
+      fmap (view envNames env) ty
 
-    Case{} -> empty
+    Case{} ->
+      Left .
+      SortMismatch SortType SortTerm $
+      fmap (view envNames env) ty
 
-    Loc _ a -> extractType depth a
+    Loc _ a -> extractType env depth a
   where
-    genProduct :: Text -> Term a l x -> Scope (Name.Name a ()) (Term a l) x -> Maybe (HsTy a)
+    genProduct ::
+      Text ->
+      Term a l x ->
+      Scope (Name.Name a ()) (Term a l) x ->
+      Either (ExtractError l a) (HsTy a)
     genProduct name a b =
       case a of
         Type ->
@@ -292,12 +407,21 @@ extractType depth ty =
             Left x -> pure $ HsTyApp (HsTyCtor $ name <> "E") x
             Right x ->
               HsTyApp <$>
-              (HsTyApp (HsTyCtor $ name <> "P") <$> extractType depth a) <*>
-              extractType depth x
+              (HsTyApp (HsTyCtor $ name <> "P") <$>
+               extractType env depth a) <*>
+              extractType env depth x
         _ ->
           HsTyApp <$>
-          (HsTyApp (HsTyCtor $ name <> "P") <$> extractType depth a) <*>
-          extractType (unvar (const $ HsTyUnit) depth) (fromScope b)
+          (HsTyApp (HsTyCtor $ name <> "P") <$>
+           extractType env depth a) <*>
+          extractType
+            (deeperEnv
+               Name.name
+               (const $ Just $ BindingEntry a)
+               (const $ Just Zero)
+               env)
+            (unvar (const HsTyUnit) depth)
+            (fromScope b)
 
 isType :: Term n l a -> Bool
 isType ty =
@@ -333,18 +457,24 @@ extractTerm ::
   Term a l x ->
   Usage ->
   Ty a l x ->
-  Maybe (HsTm a)
+  Either (ExtractError l a) (HsTm a)
 extractTerm tyctx env tm u ty =
   case tm of
     Var a -> do
-      usage <- view envUsages env a
+      usage <-
+        maybe
+          (Left . TypeError . NotInScope $ view envNames env a)
+          pure
+          (view envUsages env a)
       pure $
         case usage of
           Zero -> HsTmProxy
           _ -> HsTmVar $ view envNames env a
     Ann a u' b -> extractTerm tyctx env a u' b
-    Type -> Nothing
-
+    Type ->
+      Left .
+      SortMismatch SortTerm SortKind $
+      fmap (view envNames env) ty
     Lam n a ->
       case ty of
         Pi u' _ s t ->
@@ -362,33 +492,44 @@ extractTerm tyctx env tm u ty =
             (fromScope a)
             u
             (fromScope t)
-        _ -> Nothing
-    Pi{} -> Nothing
+        _ ->
+          Left . TypeError . ExpectedPi $
+          view envNames env <$> ty
+    Pi{} ->
+      Left .
+      SortMismatch SortTerm SortType $
+      fmap (view envNames env) ty
     App a b -> do
-      aty <- infer env a u ^? _Right._3
+      (_, _, aty) <- first TypeError $ infer env a u
       case aty of
         Pi u' _ s _ ->
           HsTmApp <$>
             extractTerm tyctx env a u aty <*>
             extractTerm tyctx env b (times u' u) s
-        _ -> Nothing
-
+        _ ->
+          Left . TypeError . ExpectedPi $
+          view envNames env <$> aty
     MkTensor a b ->
       case ty of
         Tensor _ s t ->
           HsTmPair <$>
           extractTerm tyctx env a u s <*>
           extractTerm tyctx env b u (instantiate1Name (Ann a u s) t)
-        _ -> Nothing
-    Tensor{} -> Nothing
+        _ ->
+          Left . TypeError . ExpectedTensor $
+          view envNames env <$> ty
+    Tensor{} ->
+      Left .
+      SortMismatch SortTerm SortType $
+      fmap (view envNames env) ty
     UnpackTensor n1 n2 a b -> do
-      aty <- infer env a u ^? _Right._3
+      (_, _, aty) <- first TypeError $ infer env a u
       case aty of
         Tensor _ s t -> do
           a' <- extractTerm tyctx env a u s
           if isType s
             then do
-              s' <- extractType tyctx s
+              s' <- extractType env tyctx s
               b' <-
                 extractTerm
                   (unvar (bool s' HsTyUnit . extract) tyctx)
@@ -446,25 +587,109 @@ extractTerm tyctx env tm u ty =
                   , b'
                   )
                 ]
-        _ -> Nothing
+        _ ->
+          Left . TypeError . ExpectedTensor $
+          view envNames env <$> aty
     MkWith a b ->
       case ty of
         With _ s t ->
           HsTmPair <$>
           extractTerm tyctx env a u s <*>
           extractTerm tyctx env b u (instantiate1Name (Ann a u s) t)
-        _ -> Nothing
-    With{} -> Nothing
-    Fst a ->
-      fmap (HsTmApp HsTmFst) . extractTerm tyctx env a u =<<
-      (infer env a u ^? _Right._3)
-    Snd a ->
-      fmap (HsTmApp HsTmSnd) . extractTerm tyctx env a u =<<
-      (infer env a u ^? _Right._3)
-
-    Unit -> Nothing
-    MkUnit -> Just HsTmUnit
+        _ ->
+          Left . TypeError . ExpectedWith $
+          view envNames env <$> ty
+    With{} ->
+      Left .
+      SortMismatch SortTerm SortType $
+      fmap (view envNames env) ty
+    Fst a -> do
+      (_, _, aty) <- first TypeError $ infer env a u
+      a' <- extractTerm tyctx env a u aty
+      pure $ HsTmApp HsTmFst a'
+    Snd a -> do
+      (_, _, aty) <- first TypeError $ infer env a u
+      a' <- extractTerm tyctx env a u aty
+      pure $ HsTmApp HsTmSnd a'
+    Unit ->
+      Left .
+      SortMismatch SortTerm SortType $
+      fmap (view envNames env) ty
+    MkUnit -> pure HsTmUnit
 
     Case{} -> undefined
 
     Loc _ a -> extractTerm tyctx env a u ty
+
+isKind :: Term a l x -> Bool
+isKind ty =
+  case ty of
+    Var{} -> False
+    Ann a _ _ -> isKind a
+    Type -> True
+
+    Lam{} -> False
+    Pi _ _ a b -> isKind a && isKind (fromScope b)
+    App{} -> False
+
+    MkTensor{} -> False
+    Tensor{} -> False
+    UnpackTensor{} -> False
+
+    MkWith{} -> False
+    With{} -> False
+    Fst{} -> False
+    Snd{} -> False
+
+    Unit{} -> False
+    MkUnit{} -> False
+
+    Case{} -> False
+
+    Loc _ a -> isKind a
+
+extractKind :: Term a l x -> HsKind
+extractKind ty =
+  case ty of
+    Var{} -> kstar_
+    Ann a _ _ -> extractKind a
+    Type -> kstar_
+
+    Lam{} -> kstar_
+    Pi _ _ a b ->
+      (if isKind a then extractKind a else kstar_) `karr_`
+      extractKind (fromScope b)
+    App{} -> kstar_
+
+    MkTensor{} -> kstar_
+    Tensor{} -> kstar_
+    UnpackTensor{} -> kstar_
+
+    MkWith{} -> kstar_
+    With{} -> kstar_
+    Fst{} -> kstar_
+    Snd{} -> kstar_
+
+    Unit{} -> kstar_
+    MkUnit{} -> kstar_
+
+    Case{} -> kstar_
+
+    Loc _ a -> extractKind a
+
+extractInductive ::
+  Ord a =>
+  Env a l a ->
+  Inductive a l a ->
+  Either (ExtractError l a) (HsDef a a)
+extractInductive env ind =
+  HsDefGADT name (extractKind $ _indTypeType ind) <$>
+  (Map.foldrWithKey
+    (\k a b -> do
+       a' <- extractType (extendEnv (inductiveEntry ind) env) HsTyVar a
+       b' <- b
+       pure $ (k, a') : b')
+    (pure [])
+    (_indConstructors ind))
+  where
+    name = _indTypeName ind
