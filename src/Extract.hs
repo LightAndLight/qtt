@@ -1,4 +1,5 @@
 {-# language GADTs #-}
+{-# language LambdaCase #-}
 {-# language OverloadedStrings #-}
 {-# language ScopedTypeVariables #-}
 module Extract where
@@ -7,9 +8,11 @@ import Bound.Name (instantiate1Name)
 import Bound.Scope (Scope, fromScope)
 import Bound.Var (Var(..), unvar)
 import Control.Comonad (extract)
-import Control.Lens.Getter (view)
+import Control.Lens.Getter ((^.), view)
+import Control.Lens.Setter ((%~))
 import Data.Bifunctor (first)
 import Data.Bool (bool)
+import Data.Function ((&))
 import Data.Semiring (times)
 import Data.String (IsString)
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..), Doc)
@@ -23,6 +26,7 @@ import Inductive
 import Syntax
 import TypeError
 import Typecheck
+import Unify
 
 data HsPat a
   = HsPatCtor a [HsPat a]
@@ -457,7 +461,29 @@ extractPattern :: Pattern a p -> HsPat a
 extractPattern (PVar a) = HsPatVar a
 extractPattern (PCtor a b _) = HsPatCtor a (HsPatVar <$> b)
 
+extractTelescope ::
+  (Ord a, Ord x, IsString a, Semigroup a) =>
+  Env a l x ->
+  (x -> HsTy a) ->
+  [(a, Usage, Ty a l x)] ->
+  Either (ExtractError l a) [HsTy a]
+extractTelescope _ _ [] = pure []
+extractTelescope env tyctx ((n, u, ty) : rest) = do
+  let
+    ty' =
+      if isType ty
+      then HsTyVar n
+      else HsTyApp HsTyProxy HsTyVoid
+  (:) ty' <$>
+    extractTelescope
+      (env &
+        envUsages %~ (\f x -> if x == view envDepth env n then Just u else f x) &
+        envTypes %~ (\f x -> if x == view envDepth env n then Just (BindingEntry ty) else f x))
+      (\x -> if x == view envDepth env n then ty' else tyctx x)
+      rest
+
 extractTerm ::
+  forall a l x.
   (Ord x, Ord a, IsString a, Semigroup a) =>
   (x -> HsTy a) ->
   Env a l x ->
@@ -623,10 +649,7 @@ extractTerm tyctx env tm u ty =
       SortMismatch SortTerm SortType $
       fmap (view envNames env) ty
     MkUnit -> pure HsTmUnit
-    Case{} -> undefined
-      {-
     Case a b -> do
-      undefined
       (_, au, aty) <- first TypeError $ infer env a u
       HsTmCase <$>
         extractTerm tyctx env a u aty <*>
@@ -635,24 +658,56 @@ extractTerm tyctx env tm u ty =
              case x of
                BranchImpossible p ->
                  ((extractPattern p, HsTmImpossible) :) <$> y
-               Branch p body ->
-                 (:) <$>
-                 fmap
-                   ((,) (extractPattern p))
-                   (extractTerm
-                      (unvar _ tyctx)
-                      (deeperEnv
-                         Name.name
-                         _
-                         (const $ Just $ times u au)
-                         env)
-                      (fromScope body)
-                      u
-                      (F <$> ty)) <*>
-                 y)
+               Branch (PVar v) body -> do
+                 a' <- extractType env tyctx aty
+                 body' <-
+                   extractTerm
+                     (unvar (const a') tyctx)
+                     (deeperEnv
+                        Name.name
+                        (const $ Just $ BindingEntry aty)
+                        (const $ Just $ times u au)
+                        env)
+                     (fromScope body)
+                     u
+                     (F <$> ty)
+                 ((HsPatVar v, body') :) <$> y
+               Branch (PCtor ctorName cs _) body -> do
+                 ctorType <-
+                   case view envTypes env $ view envDepth env ctorName of
+                     Nothing ->
+                       Left . TypeError $
+                       NotInScope ctorName
+                     Just (CtorEntry e) -> pure e
+                     Just _ ->
+                       Left . TypeError $
+                       NotConstructorFor ctorName (view envNames env <$> ty)
+                 (args, retty) <-
+                   first TypeError $
+                   applyCtorArgs (env ^. envDepth) ctorName ctorType cs
+                 subst <-
+                   first TypeError $
+                   unifyInductive
+                     (env ^. envNames)
+                     (env ^. envTypes)
+                     ty
+                     retty
+                 let (argusages, argtys) = unzip args
+                 args' <- extractTelescope env tyctx (zip3 cs argusages argtys)
+                 body' <-
+                   extractTerm
+                     (unvar (\(Name.Name _ (C n)) -> args' !! n) tyctx)
+                     (deeperEnv
+                        Name.name
+                        (Just . (\(Name.Name _ (C n)) -> BindingEntry $ argtys !! n))
+                        (Just . (\(Name.Name _ (C n)) -> times u $ argusages !! n))
+                        env)
+                     (fromScope body)
+                     u
+                     (F <$> bindSubst subst ty)
+                 ((HsPatCtor ctorName $ HsPatVar <$> cs, body') :) <$> y)
           (pure [])
           b
--}
     Loc _ a -> extractTerm tyctx env a u ty
 
 isKind :: Term a l x -> Bool

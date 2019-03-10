@@ -1,10 +1,11 @@
+{-# language OverloadedLists #-}
 module Test.Extract where
 
 import Prelude hiding (pi)
 
 import Data.Map (Map)
 import Test.Hspec
-import Text.PrettyPrint.ANSI.Leijen (Pretty, Doc, pretty)
+import Text.PrettyPrint.ANSI.Leijen (Doc, pretty)
 
 import qualified Data.Map as Map
 
@@ -18,17 +19,17 @@ doPrettyHs :: HsTm String -> Doc
 doPrettyHs = pretty
 
 doExtractTerm ::
-  (Ord a, Pretty a, Show l, Show a) =>
-  Term a l a ->
-  Ty a l a ->
+  Map String (Usage, Entry String String String) ->
+  Term String String String ->
+  Ty String String String ->
   Expectation
-doExtractTerm tm ty =
+doExtractTerm env tm ty =
   either (expectationFailure . show) (print . pretty) mtm
   where
     mtm =
       extractTerm
         HsTyVar
-        (Env id id (const Nothing) (const Nothing))
+        (toEnv env)
         tm
         Many
         ty
@@ -154,20 +155,39 @@ subsetInd =
     ]
   }
 
+caseSubsetTy :: Term String String String
+caseSubsetTy =
+  forall_ ("a", Type) $
+  forall_ ("p", arr (pure "a") Type) $
+  arr (App (App (pure "Subset") (pure "a")) (pure "p")) $
+  pure "a"
+
+caseSubsetTm :: Term String String String
+caseSubsetTm =
+  lam "a" $
+  lam "p" $
+  lam "x" $
+  Case (pure "x")
+  [ ctorb "MkSubset" ["a", "p", "x", "ev"] $
+    pure "x"
+  ]
+
 extractSpec :: Spec
 extractSpec =
   describe "extraction" $ do
     it "const" $
-      doExtractTerm constTm constTy
+      doExtractTerm mempty constTm constTy
     it "const eta 1" $
-      doExtractTerm (lam "A" $ App (Ann constTm Many constTy) (pure "A")) constTy
+      doExtractTerm mempty (lam "A" $ App (Ann constTm Many constTy) (pure "A")) constTy
     it "fst" $
-      doExtractTerm fstTm fstTy
+      doExtractTerm mempty fstTm fstTy
     it "idf" $
-      doExtractTerm idfTm idfTy
+      doExtractTerm mempty idfTm idfTy
     it "list" $
       doExtractInductive mempty listInd
     it "vect" $
       doExtractInductive (inductiveEntry natInd) vectInd
     it "subset" $
       doExtractInductive mempty subsetInd
+    it "subset case" $
+      doExtractTerm (inductiveEntry subsetInd) caseSubsetTm caseSubsetTy

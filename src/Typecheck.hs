@@ -166,13 +166,11 @@ applyCtorArgs ::
   [a] -> -- ^ Arg names
   Either
     (TypeError l a)
-    -- ([Ty a l (Var (Name a (Path Int)) x)], Ty a l (Var (Name a (Path Int)) x))
     ([(Usage, Ty a l x)], Ty a l x)
 applyCtorArgs depth ctorName = go id 0
   where
     go ::
       forall y.
-      -- (y -> Var (Name a (Path Int)) x) ->
       (y -> x) ->
       Int -> -- ^ Current arg
       Ty a l y -> -- ^ Constructor type
