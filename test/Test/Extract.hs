@@ -172,6 +172,23 @@ caseSubsetTm =
     pure "x"
   ]
 
+headTy :: Term String String String
+headTy =
+  forall_ ("n", pure "Nat") $
+  forall_ ("a", Type) $
+  arr (App (App (pure "Vect") (App (pure "S") (pure "n"))) (pure "a")) $
+  pure "a"
+
+headTm :: Term String String String
+headTm =
+  lam "n" $
+  lam "a" $
+  lam "xs" $
+  Case (pure "xs")
+  [ ctorb "Cons" ["n", "a", "x", "xs"] (pure "x")
+  , ctorb_imp "Nil" []
+  ]
+
 extractSpec :: Spec
 extractSpec =
   describe "extraction" $ do
@@ -191,3 +208,8 @@ extractSpec =
       doExtractInductive mempty subsetInd
     it "subset case" $
       doExtractTerm (inductiveEntry subsetInd) caseSubsetTm caseSubsetTy
+    it "safehead" $
+      doExtractTerm
+        (inductiveEntry natInd <> inductiveEntry vectInd)
+        headTm
+        headTy
