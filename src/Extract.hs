@@ -1,3 +1,4 @@
+{-# language GADTs #-}
 {-# language OverloadedStrings #-}
 {-# language ScopedTypeVariables #-}
 module Extract where
@@ -11,12 +12,10 @@ import Data.Bifunctor (first)
 import Data.Bool (bool)
 import Data.Semiring (times)
 import Data.String (IsString)
-import Data.Text (Text)
 import Text.PrettyPrint.ANSI.Leijen (Pretty(..), Doc)
 
 import qualified Bound.Name as Name
 import qualified Data.Map as Map
-import qualified Data.Text as Text
 import qualified Text.PrettyPrint.ANSI.Leijen as Pretty
 
 import Context
@@ -26,7 +25,7 @@ import TypeError
 import Typecheck
 
 data HsPat a
-  = HsPatCtor Text [HsPat a]
+  = HsPatCtor a [HsPat a]
   | HsPatVar a
   | HsPatProxy
   | HsPatAnn (HsPat a) (HsTy a)
@@ -43,6 +42,7 @@ data HsTm a
   | HsTmProxy
   | HsTmCase (HsTm a) [(HsPat a, HsTm a)]
   | HsTmAnn (HsTm a) (HsTy a)
+  | HsTmImpossible
 data HsTy a
   = HsTyUnit
   | HsTyVoid
@@ -50,7 +50,7 @@ data HsTy a
   | HsTyVar a
   | HsTyApp (HsTy a) (HsTy a)
   | HsTyForall a (HsTy a)
-  | HsTyCtor Text
+  | HsTyCtor a
   | HsArr (HsTy a) (HsTy a)
 data HsKind = HsKindStar | HsKindArr HsKind HsKind
 data HsDef n a
@@ -85,7 +85,7 @@ prettyHsPat pvar pat =
     HsPatVar a -> pvar a
     HsPatCtor a b ->
       Pretty.hsep $
-      Pretty.text (Text.unpack a) :
+      pvar a :
       fmap
         (\x ->
             (case x of
@@ -102,6 +102,7 @@ prettyHsPat pvar pat =
 prettyHsTm :: (a -> Doc) -> HsTm a -> Doc
 prettyHsTm pvar tm =
   case tm of
+    HsTmImpossible -> Pretty.text "error \"impossible\""
     HsTmUnit -> Pretty.text "()"
     HsTmFst -> Pretty.text "fst"
     HsTmSnd -> Pretty.text "snd"
@@ -215,7 +216,7 @@ prettyHsTy pvar ty =
       , pvar a <> Pretty.dot
       , prettyHsTy pvar b
       ]
-    HsTyCtor a -> Pretty.text $ Text.unpack a
+    HsTyCtor a -> pvar a
 
 instance Pretty a => Pretty (HsTy a) where
   pretty = prettyHsTy pretty
@@ -294,7 +295,7 @@ data ExtractError l a
 
 extractType ::
   forall a l x.
-  (Ord a, Ord x) =>
+  (Ord a, Ord x, IsString a, Semigroup a) =>
   Env a l x ->
   (x -> HsTy a) ->
   Term a l x ->
@@ -398,7 +399,7 @@ extractType env depth ty =
     Loc _ a -> extractType env depth a
   where
     genProduct ::
-      Text ->
+      a ->
       Term a l x ->
       Scope (Name.Name a ()) (Term a l) x ->
       Either (ExtractError l a) (HsTy a)
@@ -452,8 +453,12 @@ isType ty =
 
     Loc _ a -> isType a
 
+extractPattern :: Pattern a p -> HsPat a
+extractPattern (PVar a) = HsPatVar a
+extractPattern (PCtor a b _) = HsPatCtor a (HsPatVar <$> b)
+
 extractTerm ::
-  (Ord x, Ord a) =>
+  (Ord x, Ord a, IsString a, Semigroup a) =>
   (x -> HsTy a) ->
   Env a l x ->
   Term a l x ->
@@ -618,9 +623,36 @@ extractTerm tyctx env tm u ty =
       SortMismatch SortTerm SortType $
       fmap (view envNames env) ty
     MkUnit -> pure HsTmUnit
-
     Case{} -> undefined
-
+      {-
+    Case a b -> do
+      undefined
+      (_, au, aty) <- first TypeError $ infer env a u
+      HsTmCase <$>
+        extractTerm tyctx env a u aty <*>
+        foldr
+          (\x y ->
+             case x of
+               BranchImpossible p ->
+                 ((extractPattern p, HsTmImpossible) :) <$> y
+               Branch p body ->
+                 (:) <$>
+                 fmap
+                   ((,) (extractPattern p))
+                   (extractTerm
+                      (unvar _ tyctx)
+                      (deeperEnv
+                         Name.name
+                         _
+                         (const $ Just $ times u au)
+                         env)
+                      (fromScope body)
+                      u
+                      (F <$> ty)) <*>
+                 y)
+          (pure [])
+          b
+-}
     Loc _ a -> extractTerm tyctx env a u ty
 
 isKind :: Term a l x -> Bool
@@ -680,7 +712,7 @@ extractKind ty =
     Loc _ a -> extractKind a
 
 extractInductive ::
-  Ord a =>
+  (Ord a, IsString a, Semigroup a) =>
   Env a l a ->
   Inductive a l a ->
   Either (ExtractError l a) (HsDef a a)
