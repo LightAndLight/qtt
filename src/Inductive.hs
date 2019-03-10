@@ -7,6 +7,7 @@ import Bound.Var (Var(..))
 import Control.Monad (unless)
 import Control.Monad.Writer.Strict (runWriter, tell)
 import Data.Map (Map)
+import Data.String (IsString)
 
 import qualified Data.Map as Map
 
@@ -32,7 +33,7 @@ returnsCtor :: forall n l a. Eq a => Term n l a -> a -> Bool
 returnsCtor = go id
   where
     go :: forall x. Eq x => (a -> x) -> Term n l x -> a -> Bool
-    go ctx (Pi _ _ _ rest) val = go (F . ctx) (fromScope rest) val
+    go ctx (App (App (Pi _) _) (Lam _ rest)) val = go (F . ctx) (fromScope rest) val
     go ctx (App a _) val = go ctx a val
     go ctx (Var a) val = a == ctx val
     go _ _ _ = False
@@ -41,7 +42,7 @@ strictlyPositiveIn :: forall n l a. Eq a => a -> Term n l a -> Bool
 strictlyPositiveIn = go id
   where
     validArgPi :: forall x. Eq x => (a -> x) -> a -> Term n l x -> Bool
-    validArgPi ctx val (Pi _ _ ty rest) =
+    validArgPi ctx val (App (App (Pi _) ty) (Lam _ rest)) =
       ctx val `notElem` ty &&
       validArgPi (F . ctx) val (fromScope rest)
     validArgPi ctx val ty = validArgApp ctx val ty
@@ -52,13 +53,13 @@ strictlyPositiveIn = go id
     validArgApp _ _ _ = True
 
     go :: forall x. Eq x => (a -> x) -> a -> Term n l x -> Bool
-    go ctx val (Pi _ _ ty rest) =
+    go ctx val (App (App (Pi _) ty) (Lam _ rest)) =
       validArgPi ctx val ty &&
       go (F . ctx) val (fromScope rest)
     go _ _ _ = True
 
 checkInductive ::
-  Ord a =>
+  (Ord a, IsString a, Monoid a) =>
   (a -> Maybe (Entry a l a)) ->
   (a -> Maybe Usage) ->
   Inductive a l a ->

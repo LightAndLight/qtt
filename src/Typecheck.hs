@@ -4,6 +4,7 @@
 {-# language FlexibleContexts #-}
 {-# language GADTs #-}
 {-# language LambdaCase #-}
+{-# language OverloadedStrings #-}
 {-# language RankNTypes #-}
 {-# language ScopedTypeVariables #-}
 {-# language TemplateHaskell #-}
@@ -20,13 +21,14 @@ import Control.Lens.TH (makeLenses)
 import Control.Lens.Tuple (_3)
 import Control.Monad (guard)
 import Data.Bool (bool)
-import Data.Foldable (traverse_)
+import Data.Foldable (fold, traverse_)
 import Data.Function ((&))
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Semiring (times)
 import Data.Set (Set)
+import Data.String (IsString)
 
 import qualified Bound.Name as Bound
 import qualified Data.Map as Map
@@ -82,19 +84,19 @@ eval depth tm =
     Ann a _ _ -> a
     Type -> Type
     Lam n a -> Lam n $ evalScope depth a
-    Pi u n a b -> Pi u n (eval depth a) (evalScope depth b)
+    Pi u -> Pi u
     App a b ->
       case eval depth a of
         Lam _ s -> eval depth $ instantiate1 b s
         a' -> App a' $ eval depth b
     MkTensor a b -> MkTensor (eval depth a) (eval depth b)
-    Tensor n a b -> Tensor n (eval depth a) (evalScope depth b)
+    Tensor -> Tensor
     UnpackTensor m n a b ->
       case eval depth a of
         MkTensor x y -> eval depth $ instantiateName (bool x y) b
         a' -> UnpackTensor m n a' $ evalScope depth b
     MkWith a b -> MkWith (eval depth a) (eval depth b)
-    With n a b -> With n (eval depth a) (evalScope depth b)
+    With -> With
     Fst a ->
       case eval depth a of
         MkWith x _ -> x
@@ -173,14 +175,17 @@ applyCtorArgs depth ctorName = go id 0
         ([(Usage, Ty a l x)], Ty a l x)
     go _ !_ Pi{} [] = Left $ NotEnoughArguments ctorName
     go f !_ ctorTy [] = Right ([], f <$> ctorTy)
-    go f !count (Pi u _ s t) (a:as) = do
-      (tys, ret) <-
-        go
-          (unvar (depth . const a) f)
-          (count+1)
-          (fromScope t)
-          as
-      pure ((u, fmap f s) : tys, ret)
+    go f !count (App (App (Pi u) s) t_) (a:as) =
+      case t_ of
+        Lam _ t -> do
+          (tys, ret) <-
+            go
+              (unvar (depth . const a) f)
+              (count+1)
+              (fromScope t)
+              as
+          pure ((u, fmap f s) : tys, ret)
+        _ -> error "applyCtorArgs: non-Lam applied to Pi, but not caught by type checker"
     go _ !_ _ (_:_) = Left $ TooManyArguments ctorName
 
 matchSubst :: Eq a => Term n l a -> Term n l a -> a -> Term n l a
@@ -204,7 +209,7 @@ deeperEnv names types usages env =
   }
 
 checkBranchesMatching ::
-  (Ord x, Ord a) =>
+  (Ord x, Ord a, IsString a, Monoid a) =>
   Env a l x ->
   (Term a l x, Usage, Ty a l x) ->
   NonEmpty (Branch a (Term a l) x) ->
@@ -335,7 +340,7 @@ checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCt
             (Just remaining')
 
 checkBranches ::
-  (Ord x, Ord a) =>
+  (Ord x, Ord a, IsString a, Monoid a) =>
   Env a l x ->
   (Term a l x, Usage, Ty a l x) ->
   NonEmpty (Branch a (Term a l) x) ->
@@ -368,7 +373,7 @@ checkBranches env (inTm, inUsage, inTy) bs u outTy = do
     (inTyCon, _) = unfoldApps inTy
 
 checkZero ::
-  (Ord x, Ord a) =>
+  (Ord x, Ord a, IsString a, Monoid a) =>
   Env a l x ->
   Term a l x ->
   Ty a l x ->
@@ -377,7 +382,7 @@ checkZero env tm =
   check (env & envUsages %~ ((Zero <$) .)) tm Zero . eval (env ^. envDepth)
 
 check ::
-  (Ord x, Ord a) =>
+  (Ord x, Ord a, IsString a, Monoid a) =>
   Env a l x ->
   Term a l x ->
   Usage ->
@@ -390,102 +395,69 @@ check env tm u ty_ =
       case ty of
         Type -> pure $ env ^. envUsages
         _ -> Left $ ExpectedType $ env ^. envNames <$> ty
-    Pi _ _ a b ->
-      case ty of
-        Type -> do
-          _ <- checkZero env a Type
-          _ <-
-            checkZero
-              (deeperEnv
-                 Bound.name
-                 (const (Just $ BindingEntry a) . extract)
-                 (const (Just Zero) . extract)
-                 env)
-              (fromScope b)
-              Type
-          pure $ env ^. envUsages
-        _ -> Left $ ExpectedType $ env ^. envNames <$> ty
     Lam n a ->
       case ty of
-        Pi u' _ s t -> do
-          usages' <-
-            check
-              (deeperEnv
-                 Bound.name
-                 (const (Just $ BindingEntry s) . extract)
-                 (const (Just $ times u' u))
-                 env)
-              (fromScope a)
-              u
-              (fromScope t)
-          unsafeCheckConsumed
-            (unvar Bound.name $ env ^. envNames)
-            (times u' u)
-            (B $ Name n ())
-            usages'
-          pure $ usages' . F
+        App (App (Pi u') s) t_ ->
+          case t_ of
+            Lam _ t -> do
+              usages' <-
+                check
+                  (deeperEnv
+                    Bound.name
+                    (const (Just $ BindingEntry s) . extract)
+                    (const (Just $ times u' u))
+                    env)
+                  (fromScope a)
+                  u
+                  (fromScope t)
+              unsafeCheckConsumed
+                (unvar Bound.name $ env ^. envNames)
+                (times u' u)
+                (B $ Name (fold n) ())
+                usages'
+              pure $ usages' . F
+            _ -> error "check: non-Lam applied to Pi, but not caught by type checker"
         _ -> Left $ ExpectedPi $ env ^. envNames <$> ty
-    Tensor _ a b ->
-      case ty of
-        Type -> do
-          _ <- checkZero env a Type
-          _ <-
-            checkZero
-              (deeperEnv
-                 Bound.name
-                 (const (Just $ BindingEntry a) . extract)
-                 (const (Just Zero) . extract)
-                 env)
-              (fromScope b)
-              Type
-          pure $ env ^. envUsages
-        _ -> Left $ ExpectedType $ env ^. envNames <$> ty
     MkTensor a b ->
       case ty of
-        Tensor _ s t -> do
-          usages' <- check env a u s
-          check (env & envUsages .~ usages') b u (instantiate1 (Ann a u s) t)
+        App (App Tensor s) t_ ->
+          case t_ of
+            Lam _ t -> do
+              usages' <- check env a u s
+              check (env & envUsages .~ usages') b u (instantiate1 (Ann a u s) t)
+            _ -> error "check: non-Lam applied to Tensor, but not caught by type checker"
         _ -> Left $ ExpectedTensor $ env ^. envNames <$> ty
     UnpackTensor n1 n2 a b -> do
       (usages', aUsage, aTy) <- infer env a u
       case aTy of
-        Tensor _ s t -> do
-          usages'' <-
-            check
-              (deeperEnv
-                 Bound.name
-                 (Just . BindingEntry . bool s (instantiate1Name (Fst a) t) . extract)
-                 (const (Just aUsage) . extract)
-                 (env & envUsages .~ usages'))
-              (fromScope b)
-              u
-              (F <$> ty)
-          let names' = unvar Bound.name $ env ^. envNames
-          unsafeCheckConsumed names' aUsage (B $ Name n1 False) usages''
-          unsafeCheckConsumed names' aUsage (B $ Name n2 True) usages''
-          pure $ usages'' . F
+        App (App Tensor s) t_ ->
+          case t_ of
+            Lam _ t -> do
+              usages'' <-
+                check
+                  (deeperEnv
+                    Bound.name
+                    (Just . BindingEntry . bool s (instantiate1Name (Fst a) t) . extract)
+                    (const (Just aUsage) . extract)
+                    (env & envUsages .~ usages'))
+                  (fromScope b)
+                  u
+                  (F <$> ty)
+              let names' = unvar Bound.name $ env ^. envNames
+              unsafeCheckConsumed names' aUsage (B $ Name n1 False) usages''
+              unsafeCheckConsumed names' aUsage (B $ Name n2 True) usages''
+              pure $ usages'' . F
+            _ -> error "check: non-Lam applied to Tensor, but not caught by type checker"
         _ -> Left $ ExpectedTensor $ env ^. envNames <$> aTy
-    With _ a b ->
-      case ty of
-        Type -> do
-          _ <- checkZero env a Type
-          _ <-
-            checkZero
-              (deeperEnv
-                 Bound.name
-                 (const (Just $ BindingEntry a))
-                 (const (Just Zero))
-                 env)
-              (fromScope b)
-              Type
-          pure $ env ^. envUsages
-        _ -> Left $ ExpectedType $ env ^. envNames <$> ty
     MkWith a b ->
       case ty of
-        With _ s t -> do
-          usagesA <- check env a u s
-          usagesB <- check env b u (instantiate1 (Ann a u s) t)
-          pure $ mergeUsages usagesA usagesB
+        App (App With s) t_ ->
+          case t_ of
+            Lam _ t -> do
+              usagesA <- check env a u s
+              usagesB <- check env b u (instantiate1 (Ann a u s) t)
+              pure $ mergeUsages usagesA usagesB
+            _ -> error "check: non-Lam applied to With, but not caught by type checker"
         _ -> Left $ ExpectedWith $ env ^. envNames <$> ty
     Unit ->
       case ty of
@@ -505,7 +477,7 @@ check env tm u ty_ =
         else Left $ TypeMismatch (env ^. envNames <$> ty) (env ^. envNames <$> tmTy)
 
 infer ::
-  (Ord x, Ord a) =>
+  (Ord x, Ord a, IsString a, Monoid a) =>
   Env a l x ->
   Term a l x ->
   Usage ->
@@ -534,6 +506,33 @@ infer env tm u =
         (Many, One) ->
           pure (\x -> Zero <$ guard (x == a) <|> view envUsages env x, u', aTy)
         (Many, Many) -> pure (env ^. envUsages, u', aTy)
+    Pi _ ->
+      pure
+      ( env ^. envUsages
+      , u
+      , fmap (view envDepth env) $
+        forall_ ("a", Type) $
+        arr (pure "a" `arr` Type) $
+        Type
+      )
+    Tensor ->
+      pure
+      ( env ^. envUsages
+      , u
+      , fmap (view envDepth env) $
+        forall_ ("a", Type) $
+        arr (pure "a" `arr` Type) $
+        Type
+      )
+    With ->
+      pure
+      ( env ^. envUsages
+      , u
+      , fmap (view envDepth env) $
+        forall_ ("a", Type) $
+        arr (pure "a" `arr` Type) $
+        Type
+      )
     Ann a u' b -> do
       _ <- checkZero env b Type
       usages' <- check env a u' b
@@ -541,19 +540,25 @@ infer env tm u =
     App a b -> do
       (usages', _, aTy) <- infer env a u
       case aTy of
-        Pi u' _ s t -> do
-          let u'' = times u u'
-          usages'' <- check (env & envUsages .~ usages') b u'' s
-          pure (usages'', u, instantiate1 (Ann b u'' s) t)
+        App (App (Pi u') s) t_ ->
+          case t_ of
+            Lam _ t -> do
+              let u'' = times u u'
+              usages'' <- check (env & envUsages .~ usages') b u'' s
+              pure (usages'', u, instantiate1 (Ann b u'' s) t)
+            _ -> error "infer: non-Lam applied to Pi, but not caught by type checker"
         _ -> Left $ ExpectedPi $ env ^. envNames <$> aTy
     Fst a -> do
       (usages', _, aTy) <- infer env a u
       case aTy of
-        With _ s _ -> pure (usages', u, s)
+        App (App With s) _ -> pure (usages', u, s)
         _ -> Left $ ExpectedWith $ env ^. envNames <$> aTy
     Snd a -> do
       (usages', _, aTy) <- infer env a u
       case aTy of
-        With _ _ t -> pure (usages', u, instantiate1 (Fst a) t)
+        App (App With _) t_ ->
+          case t_ of
+            Lam _ t -> pure (usages', u, instantiate1 (Fst a) t)
+            _ -> error "infer: non-Lam applied to With, but not caught by type checker"
         _ -> Left $ ExpectedWith $ env ^. envNames <$> aTy
     _ -> Left $ Can'tInfer $ env ^. envNames <$> tm

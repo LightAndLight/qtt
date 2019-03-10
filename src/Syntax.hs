@@ -122,16 +122,16 @@ data Term n l a
   | Ann (Term n l a) Usage (Term n l a)
   | Type
 
-  | Lam n (Scope (Name n ()) (Term n l) a)
-  | Pi Usage (Maybe n) (Term n l a) (Scope (Name n ()) (Term n l) a)
+  | Lam (Maybe n) (Scope (Name n ()) (Term n l) a)
+  | Pi Usage
   | App (Term n l a) (Term n l a)
 
   | MkTensor (Term n l a) (Term n l a)
-  | Tensor n (Term n l a) (Scope (Name n ()) (Term n l) a)
+  | Tensor
   | UnpackTensor n n (Term n l a) (Scope (Name n Bool) (Term n l) a)
 
   | MkWith (Term n l a) (Term n l a)
-  | With n (Term n l a) (Scope (Name n ()) (Term n l) a)
+  | With
   | Fst (Term n l a)
   | Snd (Term n l a)
 
@@ -153,15 +153,14 @@ instance Eq1 (Term n l) where
   liftEq f (Ann a b c) (Ann a' b' c') =
     liftEq f a a' && b == b' && liftEq f c c'
   liftEq f (Lam _ a) (Lam _ a') = liftEq f a a'
-  liftEq f (Pi a _ b c) (Pi a' _ b' c') =
-    a == a' && liftEq f b b' && liftEq f c c'
+  liftEq _ (Pi a) (Pi a') = a == a'
   liftEq f (App a b) (App a' b') = liftEq f a a' && liftEq f b b'
   liftEq f (MkTensor a b) (MkTensor a' b') = liftEq f a a' && liftEq f b b'
-  liftEq f (Tensor _ a b) (Tensor _ a' b') = liftEq f a a' && liftEq f b b'
+  liftEq _ Tensor Tensor = True
   liftEq f (UnpackTensor _ _ a b) (UnpackTensor _ _ a' b') =
     liftEq f a a' && liftEq f b b'
   liftEq f (MkWith a b) (MkWith a' b') = liftEq f a a' && liftEq f b b'
-  liftEq f (With _ a b) (With _ a' b') = liftEq f a a' && liftEq f b b'
+  liftEq _ With With = True
   liftEq f (Fst a) (Fst a') = liftEq f a a'
   liftEq f (Snd a) (Snd a') = liftEq f a a'
   liftEq _ Unit Unit = True
@@ -184,15 +183,15 @@ instance Monad (Term n l) where
       Type -> Type
 
       Lam n a -> Lam n (a >>>= f)
-      Pi a n b c -> Pi a n (b >>= f) (c >>>= f)
+      Pi a -> Pi a
       App a b -> App (a >>= f) (b >>= f)
 
       MkTensor a b -> MkTensor (a >>= f) (b >>= f)
-      Tensor n a b -> Tensor n (a >>= f) (b >>>= f)
+      Tensor -> Tensor
       UnpackTensor n1 n2 a b -> UnpackTensor n1 n2 (a >>= f) (b >>>= f)
 
       MkWith a b -> MkWith (a >>= f) (b >>= f)
-      With n a b -> With n (a >>= f) (b >>>= f)
+      With -> With
       Fst a -> Fst (a >>= f)
       Snd a -> Snd (a >>= f)
 
@@ -210,28 +209,28 @@ unfoldApps = go []
     go as a = (a, as)
 
 lam :: Eq a => a -> Term a l a -> Term a l a
-lam a = Lam a . abstract1Name a
+lam a = Lam (Just a) . abstract1Name a
 
 pi :: Eq a => (a, Ty a l a) -> Term a l a -> Term a l a
-pi (a, ty) = Pi Many (Just a) ty . abstract1Name a
+pi (a, ty) = App (App (Pi Many) ty) . lam a
 
 lpi :: Eq a => (a, Ty a l a) -> Term a l a -> Term a l a
-lpi (a, ty) = Pi One (Just a) ty . abstract1Name a
+lpi (a, ty) = App (App (Pi One) ty) . lam a
 
 forall_ :: Eq a => (a, Ty a l a) -> Term a l a -> Term a l a
-forall_ (a, ty) = Pi Zero (Just a) ty . abstract1Name a
+forall_ (a, ty) = App (App (Pi Zero) ty) . lam a
 
 arr :: Term n l a -> Term n l a -> Term n l a
-arr a b = Pi Many Nothing a $ lift b
+arr a b = App (App (Pi Many) a) (Lam Nothing $ lift b)
 
 limp :: Term n l a -> Term n l a -> Term n l a
-limp a b = Pi One Nothing a $ lift b
+limp a b = App (App (Pi One) a) (Lam Nothing $ lift b)
 
 tensor :: Eq a => (a, Ty a l a) -> Ty a l a -> Ty a l a
-tensor (a, ty) = Tensor a ty . abstract1Name a
+tensor (a, ty) = App (App Tensor ty) . lam a
 
 with :: Eq a => (a, Ty a l a) -> Ty a l a -> Ty a l a
-with (a, ty) = With a ty . abstract1Name a
+with (a, ty) = App (App With ty) . lam a
 
 unpackTensor :: Eq a => (a, a) -> Term a l a -> Term a l a -> Term a l a
 unpackTensor (x, y) m n =

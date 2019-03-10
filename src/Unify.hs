@@ -129,13 +129,6 @@ unifyTerms varNames ctx tm1 tm2 =
     (_, Var a) -> pure $ single a tm1
     (Lam _ b, Lam _ b') -> unifyScopes varNames ctx b b'
     (Type, Type) -> pure mempty
-    (Pi a _ b c, Pi a' _ b' c') -> 
-      if a /= a'
-      then Left $ TypeMismatch (varNames <$> tm1) (varNames <$> tm2)
-      else do
-        s1 <- unifyTerms varNames ctx b b'
-        s2 <- unifyScopes varNames ctx (boundSubst s1 c) (boundSubst s1 c')
-        pure (s2 <> s1)
     (Ann _ _ a, _) -> unifyTerms varNames ctx a tm2
     (_, Ann _ _ a) -> unifyTerms varNames ctx tm1 a
     (App{}, _) -> unifyApps varNames ctx tm1 tm2
@@ -144,10 +137,6 @@ unifyTerms varNames ctx tm1 tm2 =
       s1 <- unifyTerms varNames ctx a a'
       s2 <- unifyTerms varNames ctx (bindSubst s1 b) (bindSubst s1 b')
       pure (s2 <> s1)
-    (Tensor _ a b, Tensor _ a' b') -> do
-      s1 <- unifyTerms varNames ctx a a'
-      s2 <- unifyScopes varNames ctx (boundSubst s1 b) (boundSubst s1 b')
-      pure (s2 <> s1)
     (UnpackTensor _ _ a b, UnpackTensor _ _ a' b') -> do
       s1 <- unifyTerms varNames ctx a a'
       s2 <- unifyScopes varNames ctx (boundSubst s1 b) (boundSubst s1 b')
@@ -155,10 +144,6 @@ unifyTerms varNames ctx tm1 tm2 =
     (MkWith a b, MkWith a' b') -> do
       s1 <- unifyTerms varNames ctx a a'
       s2 <- unifyTerms varNames ctx (bindSubst s1 b) (bindSubst s1 b')
-      pure (s2 <> s1)
-    (With _ a b, With _ a' b') -> do
-      s1 <- unifyTerms varNames ctx a a'
-      s2 <- unifyScopes varNames ctx (boundSubst s1 b) (boundSubst s1 b')
       pure (s2 <> s1)
     (Fst a, Fst a') -> unifyTerms varNames ctx a a'
     (Snd a, Snd a') -> unifyTerms varNames ctx a a'

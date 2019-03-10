@@ -64,17 +64,12 @@ prettyTerm pvar tm =
       , Pretty.text "=>"
       , prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope s)
       ]
-    Pi a mn b c ->
-      Pretty.hsep
-      [ Pretty.parens $
-        Pretty.hsep
-        [ maybe (Pretty.char '_') pretty mn
-        , Pretty.char ':' <> pretty a
-        , prettyTerm pvar b
-        ]
-      , Pretty.text "->"
-      , prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope c)
-      ]
+    Pi a ->
+      Pretty.text "Pi" <>
+      case a of
+        Zero -> Pretty.char '0'
+        One -> Pretty.char '1'
+        Many -> Pretty.char 'W'
     App a b ->
       Pretty.hsep
       [ (case a of
@@ -100,11 +95,7 @@ prettyTerm pvar tm =
       prettyTerm pvar a <>
       Pretty.comma <> Pretty.space <>
       prettyTerm pvar b
-    Tensor n a b ->
-      Pretty.parens $
-      Pretty.hsep [pretty n, Pretty.char ':', prettyTerm pvar a] <>
-      Pretty.char '⨂' <> Pretty.space <>
-      prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope b)
+    Tensor -> Pretty.text "Tensor"
     UnpackTensor n1 n2 a b ->
       Pretty.hsep
       [ Pretty.text "let"
@@ -123,11 +114,7 @@ prettyTerm pvar tm =
       prettyTerm pvar a <>
       Pretty.comma <> Pretty.space <>
       prettyTerm pvar b
-    With n a b ->
-      Pretty.parens $
-      Pretty.hsep [pretty n, Pretty.char ':', prettyTerm pvar a] <>
-      Pretty.char '&' <> Pretty.space <>
-      prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope b)
+    With -> Pretty.text "With"
     Fst a ->
       Pretty.hsep
       [ Pretty.text "fst"
