@@ -580,7 +580,7 @@ infer env tm u =
         (usages', _, aTy) <- infer env a u
         case aTy of
           Pi u' _ s t -> do
-            let u'' = times u u'
+            let u'' = if u == Zero || u' == Zero then Zero else One
             usages'' <- check (env & envUsages .~ usages') b u'' s
             pure (usages'', u, instantiate1 (Ann b u'' s) t)
           _ -> Left $ ExpectedPi $ env ^. envNames <$> aTy
