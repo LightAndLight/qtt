@@ -237,7 +237,7 @@ typecheckSpec =
                 pure "A"
             )
         )
-    it "14) (\\x => fst x) :1 (x : (_ : A & A)) -o A" $
+    it "14) (\\x => fst x) :1 (x : (A & A)) -o A" $
       assertRight
         ( doCheckTerm
             ( \case
@@ -249,11 +249,11 @@ typecheckSpec =
                 _ -> Nothing
             )
             (lam "x" $ Fst $ pure "x")
-            ( limp (with ("_", pure "A") (pure "A")) $
+            ( limp (with (pure "A") (pure "A")) $
                 pure "A"
             )
         )
-    it "15) (\\x => snd x) :1 (x : (_ : A & A)) -o A" $
+    it "15) (\\x => snd x) :1 (x : (A & A)) -o A" $
       assertRight
         ( doCheckTerm
             ( \case
@@ -265,11 +265,11 @@ typecheckSpec =
                 _ -> Nothing
             )
             (lam "x" $ Snd $ pure "x")
-            ( limp (with ("_", pure "A") (pure "A")) $
+            ( limp (with (pure "A") (pure "A")) $
                 pure "A"
             )
         )
-    it "16) (\\x => (fst x, snd x)) :1 (x : (_ : A & B)) -o (_ : A & B)" $
+    it "16) (\\x => (fst x, snd x)) :1 (x : (A & B)) -o (A & B)" $
       assertRight
         ( doCheckTerm
             ( \case
@@ -283,11 +283,11 @@ typecheckSpec =
                 _ -> Nothing
             )
             (lam "x" $ MkWith (Fst $ pure "x") (Snd $ pure "x"))
-            ( limp (with ("_", pure "A") (pure "B")) $
-                with ("_", pure "A") (pure "B")
+            ( limp (with (pure "A") (pure "B")) $
+                with (pure "A") (pure "B")
             )
         )
-    it "17) (\\x => (x, x)) :1 (x : A) -o (_ : A & A)" $
+    it "17) (\\x => (x, x)) :1 (x : A) -o (A & A)" $
       assertRight
         ( doCheckTerm
             ( \case
@@ -300,11 +300,17 @@ typecheckSpec =
             )
             (lam "x" $ MkWith (pure "x") (pure "x"))
             ( limp (pure "A") $
-                with ("_", pure "A") (pure "A")
+                with (pure "A") (pure "A")
             )
         )
-    it "18) (\\x => let (a, b) = x in (a, b)) :1 (x : (_ : A ⨂ B)) -> (_ : A & B)" $
-      assertRight
+    it "18) (\\x => let (a, b) = x in (a, b)) :1 (x : (_ : A ⨂ B)) -> (A & B)" $
+      {-
+      Why? Consumption is not added when forming a `&`. So, each component must consume
+      all linear variables. The second component of the tensore is always linear, so it
+      must be consumed, but it isn't consumed by the first component of the `&`.
+      -}
+      assertLeft
+        (UnusedLinear "b")
         ( doCheckTerm
             ( \case
                 "A" -> Just $ BindingEntry Type
@@ -319,10 +325,10 @@ typecheckSpec =
                   MkWith (pure "a") (pure "b")
             )
             ( arr (tensor ("_", Many, pure "A") (pure "B")) $
-                with ("_", pure "A") (pure "B")
+                with (pure "A") (pure "B")
             )
         )
-    it "19) (\\x => (fst x, snd x)) :1 (x : (_ : A & B)) -> (_ : A ⨂ B)" $
+    it "19) (\\x => (fst x, snd x)) :1 (x : (A & B)) -> (_ : A ⨂ B)" $
       assertRight
         ( doCheckTerm
             ( \case
@@ -336,30 +342,11 @@ typecheckSpec =
             ( lam "x" $
                 MkTensor (Fst $ pure "x") (Snd $ pure "x")
             )
-            ( arr (with ("_", pure "A") (pure "B")) $
+            ( arr (with (pure "A") (pure "B")) $
                 tensor ("_", Many, pure "A") (pure "B")
             )
         )
-    it "20) (\\x => let (a, b) = x in (a, b)) :1 (x : (_ : A ⨂ B)) -o (_ : A & B)" $
-      assertRight
-        ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
-            ( lam "x" $
-                unpackTensor ("a", "b") (pure "x") $
-                  MkWith (pure "a") (pure "b")
-            )
-            ( limp (tensor ("_", Many, pure "A") (pure "B")) $
-                with ("_", pure "A") (pure "B")
-            )
-        )
-    it "21) (\\x => (fst x, snd x)) :1 (x : (_ : A & B)) -o (_ : A ⨂ B)  invalid" $
+    it "19.1) (\\x => (fst x, snd x)) :1 (x : (A & B)) -o (_ : A ⨂ B)   invalid" $
       assertLeft
         (OverusedLinear "x")
         ( doCheckTerm
@@ -374,7 +361,47 @@ typecheckSpec =
             ( lam "x" $
                 MkTensor (Fst $ pure "x") (Snd $ pure "x")
             )
-            ( limp (with ("_", pure "A") (pure "B")) $
+            ( limp (with (pure "A") (pure "B")) $
+                tensor ("_", Many, pure "A") (pure "B")
+            )
+        )
+    it "20) (\\x => let (a, b) = x in (a, b)) :1 (x : (_ : A ⨂ B)) -o (A & B)" $
+      -- Why? `b`, a linear variable, isn't used in the first component of the `&`
+      assertLeft
+        (UnusedLinear "b")
+        ( doCheckTerm
+            ( \case
+                "A" -> Just $ BindingEntry Type
+                _ -> Nothing
+            )
+            ( \case
+                "A" -> Just Zero
+                _ -> Nothing
+            )
+            ( lam "x" $
+                unpackTensor ("a", "b") (pure "x") $
+                  MkWith (pure "a") (pure "b")
+            )
+            ( limp (tensor ("_", Many, pure "A") (pure "B")) $
+                with (pure "A") (pure "B")
+            )
+        )
+    it "21) (\\x => (fst x, snd x)) :1 (x : (A & B)) -o (_ : A ⨂ B)  invalid" $
+      assertLeft
+        (OverusedLinear "x")
+        ( doCheckTerm
+            ( \case
+                "A" -> Just $ BindingEntry Type
+                _ -> Nothing
+            )
+            ( \case
+                "A" -> Just Zero
+                _ -> Nothing
+            )
+            ( lam "x" $
+                MkTensor (Fst $ pure "x") (Snd $ pure "x")
+            )
+            ( limp (with (pure "A") (pure "B")) $
                 tensor ("_", Many, pure "A") (pure "B")
             )
         )
@@ -496,13 +523,13 @@ typecheckSpec =
             )
             (pure "Bool")
         )
-    it "26) A : Type, B : Type, x : (_ : A & B)  |- (case x of { y => y }) :1 (_ : A & B)" $ do
+    it "26) A : Type, B : Type, x : (_ : A & B)  |- (case x of { y => y }) :1 (A & B)" $ do
       assertRight
         ( doCheckTerm
             ( \case
                 "A" -> Just . BindingEntry $ Type
                 "B" -> Just . BindingEntry $ Type
-                "x" -> Just $ BindingEntry $ with ("_", pure "A") (pure "B")
+                "x" -> Just $ BindingEntry $ with (pure "A") (pure "B")
                 _ -> Nothing
             )
             ( \case
@@ -516,7 +543,7 @@ typecheckSpec =
                 [ varb "y" $ pure "y"
                 ]
             )
-            (with ("_", pure "A") (pure "B"))
+            (with (pure "A") (pure "B"))
         )
     it "27) ..., BoolS : Bool -> Type, TrueS : BoolS True, FalseS : BoolS False, b : Bool, x : BoolS b  |- (case x of { TrueS => TrueS; FalseS => FalseS }) :1 BoolS b" $ do
       let falseType = pure "Bool"

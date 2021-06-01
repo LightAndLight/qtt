@@ -100,7 +100,7 @@ eval depth tm =
         MkTensor x y -> eval depth $ instantiateName (bool x y) b
         a' -> UnpackTensor m n a' $ evalScope depth b
     MkWith a b -> MkWith (eval depth a) (eval depth b)
-    With n a b -> With n (eval depth a) (evalScope depth b)
+    With a b -> With (eval depth a) (eval depth b)
     Fst a ->
       case eval depth a of
         MkWith x _ -> x
@@ -494,27 +494,18 @@ check varCost env tm u ty_ =
               unsafeCheckConsumed names' u (B $ Name n2 True) usages''
               pure $ usages'' . F
             _ -> Left $ ExpectedTensor $ env ^. envNames <$> aTy
-        With _ a b ->
+        With a b ->
           case ty of
             Type -> do
               _ <- checkType env a Type
-              _ <-
-                checkType
-                  ( deeperEnv
-                      Bound.name
-                      (const (Just $ BindingEntry a))
-                      (const (Just Zero))
-                      env
-                  )
-                  (fromScope b)
-                  Type
+              _ <- checkType env b Type
               pure $ env ^. envUsages
             _ -> Left $ ExpectedType $ env ^. envNames <$> ty
         MkWith a b ->
           case ty of
-            With _ s t -> do
+            With s t -> do
               usagesA <- check varCost env a u s
-              usagesB <- check varCost env b u (instantiate1 (Ann a u s) t)
+              usagesB <- check varCost env b u t
               pure $ mergeUsages usagesA usagesB
             _ -> Left $ ExpectedWith $ env ^. envNames <$> ty
         Unit ->
@@ -598,12 +589,12 @@ infer varCost env tm u =
       Fst a -> do
         (usages', _, aTy) <- infer varCost env a u
         case aTy of
-          With _ s _ -> pure (usages', u, s)
+          With s _ -> pure (usages', u, s)
           _ -> Left $ ExpectedWith $ env ^. envNames <$> aTy
       Snd a -> do
         (usages', _, aTy) <- infer varCost env a u
         case aTy of
-          With _ _ t -> pure (usages', u, instantiate1 (Fst a) t)
+          With _ t -> pure (usages', u, t)
           _ -> Left $ ExpectedWith $ env ^. envNames <$> aTy
       _ -> Left $ Can'tInfer $ env ^. envNames <$> tm
 

@@ -159,9 +159,9 @@ unifyTerms varNames ctx tm1 tm2 =
       s1 <- unifyTerms varNames ctx a a'
       s2 <- unifyTerms varNames ctx (bindSubst s1 b) (bindSubst s1 b')
       pure (s2 <> s1)
-    (With _ a b, With _ a' b') -> do
+    (With a b, With a' b') -> do
       s1 <- unifyTerms varNames ctx a a'
-      s2 <- unifyScopes varNames ctx (boundSubst s1 b) (boundSubst s1 b')
+      s2 <- unifyTerms varNames ctx b b'
       pure (s2 <> s1)
     (Fst a, Fst a') -> unifyTerms varNames ctx a a'
     (Snd a, Snd a') -> unifyTerms varNames ctx a a'

@@ -131,12 +131,13 @@ prettyTerm pvar tm =
           <> Pretty.comma
           <> Pretty.space
           <> prettyTerm pvar b
-    With n a b ->
+    With a b ->
       Pretty.parens $
-        Pretty.hsep [pretty n, Pretty.char ':', prettyTerm pvar a]
+        prettyTerm pvar a
+          <> Pretty.space
           <> Pretty.char '&'
           <> Pretty.space
-          <> prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope b)
+          <> prettyTerm pvar b
     Fst a ->
       Pretty.hsep
         [ Pretty.text "fst"
