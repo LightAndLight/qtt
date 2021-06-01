@@ -90,14 +90,14 @@ typecheckSpec =
         )
     it "9) (\\A => \\x => (x, x)) :1 (A :0 Type) -> (x :1 A) -> (_ : A ⨂ A)   invalid" $
       assertLeft
-        (UsingErased "x")
+        (OverusedLinear "x")
         ( doCheckTerm
             (const Nothing)
             (const Nothing)
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             ( forall_ ("A", Type) $
                 lpi ("x", pure "A") $
-                  tensor ("_", pure "A") (pure "A")
+                  tensor ("_", Many, pure "A") (pure "A")
             )
         )
     it "10) (\\A => \\x => (x, x)) :1 (A :0 Type) -> (x :w A) -> (_ : A ⨂ A)" $
@@ -108,10 +108,35 @@ typecheckSpec =
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             ( forall_ ("A", Type) $
                 pi ("x", pure "A") $
-                  tensor ("_", pure "A") (pure "A")
+                  tensor ("_", Many, pure "A") (pure "A")
             )
         )
-    it "11) (\\x => let (a, b) = x in a b) :1 (x : (_ : A -> B ⨂ A)) -o B" $
+    it "11) (\\x => let (a, b) = x in a b) :1 (x : (_ : A -> B ⨂ A)) -> B   invalid" $
+      {-
+      Why? In a relevant context (the :1 judgement), a tensor is always linear in its
+      second component.
+      -}
+      assertLeft
+        (OverusedLinear "b")
+        ( doCheckTerm
+            ( \case
+                "A" -> Just $ BindingEntry Type
+                "B" -> Just $ BindingEntry Type
+                _ -> Nothing
+            )
+            ( \case
+                "A" -> Just Zero
+                "B" -> Just Zero
+                _ -> Nothing
+            )
+            (lam "x" $ unpackTensor ("a", "b") (pure "x") (App (pure "a") (pure "b")))
+            ( pi ("_", tensor ("_", Many, pure "A" `arr` pure "B") (pure "A")) $
+                pure "B"
+            )
+        )
+    it "11.1) (\\x => let (a, b) = x in a b) :1 (x : (_ : A -o B ⨂ A)) -> B" $
+      -- For something like 11) to go through, the function in the first component must use its
+      -- argument linearly or irrelevantly
       assertRight
         ( doCheckTerm
             ( \case
@@ -125,7 +150,7 @@ typecheckSpec =
                 _ -> Nothing
             )
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (App (pure "a") (pure "b")))
-            ( limp (tensor ("_", pure "A" `arr` pure "B") (pure "A")) $
+            ( pi ("_", tensor ("_", Many, pure "A" `limp` pure "B") (pure "A")) $
                 pure "B"
             )
         )
@@ -142,11 +167,11 @@ typecheckSpec =
                 _ -> Nothing
             )
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "a"))
-            ( limp (tensor ("_", pure "A") (pure "A")) $
+            ( limp (tensor ("_", Many, pure "A") (pure "A")) $
                 pure "A"
             )
         )
-    it "13) (\\x => let (a, b) = x in a) :1 (x : (_ : A ⨂ A)) -> A" $
+    it "13) (\\x => let (a, b) = x in b) :1 (x : (_ :0 A ⨂ A)) -> A" $
       assertRight
         ( doCheckTerm
             ( \case
@@ -157,8 +182,58 @@ typecheckSpec =
                 "A" -> Just Zero
                 _ -> Nothing
             )
+            (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "b"))
+            ( arr (tensor ("_", Zero, pure "A") (pure "A")) $
+                pure "A"
+            )
+        )
+    it "13.1) (\\x => let (a, b) = x in b) :1 (x : (_ :1 A ⨂ A)) -> A   invalid" $
+      assertLeft
+        (UnusedLinear "a")
+        ( doCheckTerm
+            ( \case
+                "A" -> Just $ BindingEntry Type
+                _ -> Nothing
+            )
+            ( \case
+                "A" -> Just Zero
+                _ -> Nothing
+            )
+            (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "b"))
+            ( arr (tensor ("_", One, pure "A") (pure "A")) $
+                pure "A"
+            )
+        )
+    it "13.2) (\\x => let (a, b) = x in b) :1 (x : (_ : A ⨂ A)) -> A" $
+      assertRight
+        ( doCheckTerm
+            ( \case
+                "A" -> Just $ BindingEntry Type
+                _ -> Nothing
+            )
+            ( \case
+                "A" -> Just Zero
+                _ -> Nothing
+            )
+            (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "b"))
+            ( arr (tensor ("_", Many, pure "A") (pure "A")) $
+                pure "A"
+            )
+        )
+    it "13.3) (\\x => let (a, b) = x in a) :1 (x : (_ : A ⨂ A)) -> A   invalid" $
+      assertLeft
+        (UnusedLinear "b")
+        ( doCheckTerm
+            ( \case
+                "A" -> Just $ BindingEntry Type
+                _ -> Nothing
+            )
+            ( \case
+                "A" -> Just Zero
+                _ -> Nothing
+            )
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "a"))
-            ( arr (tensor ("_", pure "A") (pure "A")) $
+            ( arr (tensor ("_", Many, pure "A") (pure "A")) $
                 pure "A"
             )
         )
@@ -243,7 +318,7 @@ typecheckSpec =
                 unpackTensor ("a", "b") (pure "x") $
                   MkWith (pure "a") (pure "b")
             )
-            ( arr (tensor ("_", pure "A") (pure "B")) $
+            ( arr (tensor ("_", Many, pure "A") (pure "B")) $
                 with ("_", pure "A") (pure "B")
             )
         )
@@ -262,7 +337,7 @@ typecheckSpec =
                 MkTensor (Fst $ pure "x") (Snd $ pure "x")
             )
             ( arr (with ("_", pure "A") (pure "B")) $
-                tensor ("_", pure "A") (pure "B")
+                tensor ("_", Many, pure "A") (pure "B")
             )
         )
     it "20) (\\x => let (a, b) = x in (a, b)) :1 (x : (_ : A ⨂ B)) -o (_ : A & B)" $
@@ -280,13 +355,13 @@ typecheckSpec =
                 unpackTensor ("a", "b") (pure "x") $
                   MkWith (pure "a") (pure "b")
             )
-            ( limp (tensor ("_", pure "A") (pure "B")) $
+            ( limp (tensor ("_", Many, pure "A") (pure "B")) $
                 with ("_", pure "A") (pure "B")
             )
         )
     it "21) (\\x => (fst x, snd x)) :1 (x : (_ : A & B)) -o (_ : A ⨂ B)  invalid" $
       assertLeft
-        (UsingErased "x")
+        (OverusedLinear "x")
         ( doCheckTerm
             ( \case
                 "A" -> Just $ BindingEntry Type
@@ -300,7 +375,7 @@ typecheckSpec =
                 MkTensor (Fst $ pure "x") (Snd $ pure "x")
             )
             ( limp (with ("_", pure "A") (pure "B")) $
-                tensor ("_", pure "A") (pure "B")
+                tensor ("_", Many, pure "A") (pure "B")
             )
         )
     it "22) (\\x => \\f => f x) :1 ∀(x : A), (f : A -> B) -> B   invalid" $
@@ -607,12 +682,52 @@ typecheckSpec =
             )
             (App (pure "BoolS") (pure "True"))
         )
-    it "30) Pair : Type -> Type -> Type, MkPair : (A : Type) -> (B : Type) -> (x : A) -> (y : B) -> Pair A B, A :0 Type, B :0 Type, x :1 Pair A B  |- (case x of { MkPair A B a b => a }) :1 A   invalid" $ do
+    it "30) Pair : Type -> Type -> Type, MkPair : (A : Type) -> (B : Type) -> (x : A) -> (y : B) -> Pair A B, A :0 Type, B :0 Type, x :1 Pair A B  |- (case x of { MkPair A B a b => a }) :1 A" $ do
       let mkPairType =
             forall_ ("A", Type) $
               forall_ ("B", Type) $
                 pi ("x", pure "A") $
                   pi ("y", pure "B") $
+                    App (App (pure "Pair") (pure "A")) (pure "B")
+
+      assertRight
+        ( doCheckTerm
+            ( \case
+                "Pair" ->
+                  Just $
+                    InductiveEntry
+                      (arr Type $ arr Type Type)
+                      ( Map.fromList
+                          [ ("MkPair", mkPairType)
+                          ]
+                      )
+                "MkPair" -> Just . CtorEntry $ mkPairType
+                "A" -> Just $ BindingEntry $ Type
+                "B" -> Just $ BindingEntry $ Type
+                "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
+                _ -> Nothing
+            )
+            ( \case
+                "Pair" -> Just Many
+                "MkPair" -> Just Many
+                "A" -> Just Zero
+                "B" -> Just Zero
+                "x" -> Just One
+                _ -> Nothing
+            )
+            ( Case
+                (pure "x")
+                [ ctorb "MkPair" ["A", "B", "x", "y"] $ pure "x"
+                ]
+            )
+            (pure "A")
+        )
+    it "30.1) Pair : Type -> Type -> Type, MkPair : (A : Type) -> (B : Type) -> (x : A) -o (y : B) -o Pair A B, A :0 Type, B :0 Type, x :1 Pair A B  |- (case x of { MkPair A B a b => a }) :1 A   invalid" $ do
+      let mkPairType =
+            forall_ ("A", Type) $
+              forall_ ("B", Type) $
+                limp (pure "A") $
+                  limp (pure "B") $
                     App (App (pure "Pair") (pure "A")) (pure "B")
 
       assertLeft
@@ -647,6 +762,45 @@ typecheckSpec =
                 ]
             )
             (pure "A")
+        )
+    it "30.2) Pair : Type -> Type -> Type, MkPair : (A : Type) -> (B : Type) -> (x : A) -> (y : B) -> Pair A B, A :0 Type, B :0 Type, a :1 A, b :1 B  |- MkPair A B a b :1 Pair A B   invalid" $ do
+      let mkPairType =
+            forall_ ("A", Type) $
+              forall_ ("B", Type) $
+                pi ("x", pure "A") $
+                  pi ("y", pure "B") $
+                    App (App (pure "Pair") (pure "A")) (pure "B")
+
+      assertLeft
+        (OverusedLinear "a")
+        ( doCheckTerm
+            ( \case
+                "Pair" ->
+                  Just $
+                    InductiveEntry
+                      (arr Type $ arr Type Type)
+                      ( Map.fromList
+                          [ ("MkPair", mkPairType)
+                          ]
+                      )
+                "MkPair" -> Just . CtorEntry $ mkPairType
+                "A" -> Just $ BindingEntry $ Type
+                "B" -> Just $ BindingEntry $ Type
+                "a" -> Just $ BindingEntry $ pure "A"
+                "b" -> Just $ BindingEntry $ pure "B"
+                _ -> Nothing
+            )
+            ( \case
+                "Pair" -> Just Many
+                "MkPair" -> Just Many
+                "A" -> Just Zero
+                "B" -> Just Zero
+                "a" -> Just One
+                "b" -> Just One
+                _ -> Nothing
+            )
+            (App (App (App (App (pure "MkPair") (pure "A")) (pure "B")) (pure "a")) (pure "b"))
+            (App (App (pure "Pair") (pure "A")) (pure "B"))
         )
     it "31) Pair : Type -> Type -> Type, MkPair : (A :0 Type) -> (B :0 Type) -> (x : A) -> (y : B) -> Pair A B, A :0 Type, B :0 Type, x :1 Pair A B  |- (case x of { MkPair A B a b => A }) :1 Type   invalid" $ do
       let mkPairType =

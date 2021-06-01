@@ -94,7 +94,7 @@ eval depth tm =
         Lam _ s -> eval depth $ instantiate1 b s
         a' -> App a' $ eval depth b
     MkTensor a b -> MkTensor (eval depth a) (eval depth b)
-    Tensor n a b -> Tensor n (eval depth a) (evalScope depth b)
+    Tensor n u a b -> Tensor n u (eval depth a) (evalScope depth b)
     UnpackTensor m n a b ->
       case eval depth a of
         MkTensor x y -> eval depth $ instantiateName (bool x y) b
@@ -221,6 +221,7 @@ deeperEnv names types usages env =
 
 checkBranchesMatching ::
   (Ord x, Ord a) =>
+  Usage ->
   Env a l x ->
   (Term a l x, Usage, Ty a l x) ->
   NonEmpty (Branch a (Term a l) x) ->
@@ -230,14 +231,15 @@ checkBranchesMatching ::
   Maybe (Set a) ->
   Either (TypeError l a) (x -> Maybe Usage)
 -- impossible branch for a non-inductive type is not allowed
-checkBranchesMatching _ _ (BranchImpossible _ :| _) _ _ _ Nothing =
+checkBranchesMatching _ _ _ (BranchImpossible _ :| _) _ _ _ Nothing =
   Left NotImpossible
 -- We are not matching on an inductive type
-checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy ctors Nothing =
+checkBranchesMatching varCost env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy ctors Nothing =
   case p of
     PVar n -> do
       usages' <-
         check
+          varCost
           ( deeperEnv
               Bound.name
               (const $ Just (BindingEntry inTy))
@@ -254,18 +256,18 @@ checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy ctors
         usages'
       case bs of
         [] -> pure $ usages' . F
-        bb : bbs -> checkBranchesMatching env (inTm, inUsage, inTy) (bb :| bbs) u outTy ctors Nothing
+        bb : bbs -> checkBranchesMatching varCost env (inTm, inUsage, inTy) (bb :| bbs) u outTy ctors Nothing
     PCtor s _ _ -> Left $ NotConstructorFor s $ env ^. envNames <$> inTy
 -- impossible branch for an inductive type. the match is impossible if the inductive type has no constructors,
 -- or if the type of the scrutinee is incompatible with with the constructor's output
-checkBranchesMatching env (inTm, inUsage, inTy) (BranchImpossible p :| bs) u outTy allCtors (Just remaining) =
+checkBranchesMatching varCost env (inTm, inUsage, inTy) (BranchImpossible p :| bs) u outTy allCtors (Just remaining) =
   case p of
     PVar _ ->
       if Map.null allCtors
         then case bs of
           [] -> pure $ env ^. envUsages
           bb : bbs ->
-            checkBranchesMatching env (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just remaining)
+            checkBranchesMatching varCost env (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just remaining)
         else Left NotImpossible
     PCtor ctorName ns _ -> do
       ctorTy <-
@@ -280,13 +282,14 @@ checkBranchesMatching env (inTm, inUsage, inTy) (BranchImpossible p :| bs) u out
           case bs of
             [] -> pure $ env ^. envUsages
             bb : bbs ->
-              checkBranchesMatching env (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just remaining)
+              checkBranchesMatching varCost env (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just remaining)
 -- We are matching on an inductive type, and cases remain for `ctors`
-checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCtors (Just remaining) =
+checkBranchesMatching varCost env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCtors (Just remaining) =
   case p of
     PVar n -> do
       usages' <-
         check
+          varCost
           ( deeperEnv
               Bound.name
               (const $ Just (BindingEntry inTy))
@@ -301,7 +304,7 @@ checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCt
         [] -> pure $ usages' . F
         bb : bbs ->
           -- The match is now total
-          checkBranchesMatching env (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just mempty)
+          checkBranchesMatching varCost env (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just mempty)
     PCtor ctorName ns _ -> do
       ctorTy <-
         case Map.lookup ctorName allCtors of
@@ -312,6 +315,7 @@ checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCt
       subst <- unifyInductive (env ^. envNames) (env ^. envTypes) inTy retTy
       usages' <-
         check
+          varCost
           ( deeperEnv
               Bound.name
               (Just . BindingEntry . (argTys !!) . pathVal . extract)
@@ -347,6 +351,7 @@ checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCt
             else Left $ UnmatchedCases remaining
         bb : bbs ->
           checkBranchesMatching
+            varCost
             env
             (inTm, inUsage, inTy)
             (bb :| bbs)
@@ -357,13 +362,14 @@ checkBranchesMatching env (inTm, inUsage, inTy) (Branch p v :| bs) u outTy allCt
 
 checkBranches ::
   (Ord x, Ord a) =>
+  Usage ->
   Env a l x ->
   (Term a l x, Usage, Ty a l x) ->
   NonEmpty (Branch a (Term a l) x) ->
   Usage ->
   Ty a l x ->
   Either (TypeError l a) (x -> Maybe Usage)
-checkBranches env (inTm, inUsage, inTy) bs u outTy = do
+checkBranches varCost env (inTm, inUsage, inTy) bs u outTy = do
   mustMatch <-
     case inTyCon of
       Var c -> do
@@ -378,6 +384,7 @@ checkBranches env (inTm, inUsage, inTy) bs u outTy = do
             _ -> Nothing
       _ -> Right Nothing
   checkBranchesMatching
+    varCost
     env
     (inTm, inUsage, inTy)
     bs
@@ -391,13 +398,14 @@ checkBranches env (inTm, inUsage, inTy) bs u outTy = do
 check ::
   HasCallStack =>
   (Ord x, Ord a) =>
+  Usage ->
   Env a l x ->
   Term a l x ->
   Usage ->
   Ty a l x ->
   Either (TypeError l a) (x -> Maybe Usage)
-check _ _ Many _ = error "check called with usage Many"
-check env tm u ty_ =
+check _ _ _ Many _ = error "check called with usage Many"
+check varCost env tm u ty_ =
   let ty = eval (env ^. envDepth) ty_ -- pre-compute
    in case tm of
         Type ->
@@ -425,6 +433,7 @@ check env tm u ty_ =
             Pi u' _ s t -> do
               usages' <-
                 check
+                  varCost
                   ( deeperEnv
                       Bound.name
                       (const (Just $ BindingEntry s) . extract)
@@ -441,7 +450,7 @@ check env tm u ty_ =
                 usages'
               pure $ usages' . F
             _ -> Left $ ExpectedPi $ env ^. envNames <$> ty
-        Tensor _ a b ->
+        Tensor _ _ a b ->
           case ty of
             Type -> do
               _ <- checkType env a Type
@@ -459,20 +468,22 @@ check env tm u ty_ =
             _ -> Left $ ExpectedType $ env ^. envNames <$> ty
         MkTensor a b ->
           case ty of
-            Tensor _ s t -> do
-              usages' <- check env a u s
-              check (env & envUsages .~ usages') b u (instantiate1 (Ann a u s) t)
+            Tensor _ u' s t -> do
+              usages' <- check (times varCost u') env a u s
+              check varCost (env & envUsages .~ usages') b u (instantiate1 (Ann a u s) t)
             _ -> Left $ ExpectedTensor $ env ^. envNames <$> ty
         UnpackTensor n1 n2 a b -> do
-          (usages', aUsage, aTy) <- infer env a u
+          (usages', _, aTy) <- infer varCost env a u
           case aTy of
-            Tensor _ s t -> do
+            Tensor _ u' s t -> do
+              let aUsage = times u u'
               usages'' <-
                 check
+                  varCost
                   ( deeperEnv
                       Bound.name
                       (Just . BindingEntry . bool s (instantiate1Name (Fst a) t) . extract)
-                      (const (Just aUsage) . extract)
+                      (bool (Just aUsage) (Just u) . extract)
                       (env & envUsages .~ usages')
                   )
                   (fromScope b)
@@ -480,7 +491,7 @@ check env tm u ty_ =
                   (F <$> ty)
               let names' = unvar Bound.name $ env ^. envNames
               unsafeCheckConsumed names' aUsage (B $ Name n1 False) usages''
-              unsafeCheckConsumed names' aUsage (B $ Name n2 True) usages''
+              unsafeCheckConsumed names' u (B $ Name n2 True) usages''
               pure $ usages'' . F
             _ -> Left $ ExpectedTensor $ env ^. envNames <$> aTy
         With _ a b ->
@@ -502,8 +513,8 @@ check env tm u ty_ =
         MkWith a b ->
           case ty of
             With _ s t -> do
-              usagesA <- check env a u s
-              usagesB <- check env b u (instantiate1 (Ann a u s) t)
+              usagesA <- check varCost env a u s
+              usagesB <- check varCost env b u (instantiate1 (Ann a u s) t)
               pure $ mergeUsages usagesA usagesB
             _ -> Left $ ExpectedWith $ env ^. envNames <$> ty
         Unit ->
@@ -515,10 +526,10 @@ check env tm u ty_ =
             Unit -> pure $ env ^. envUsages
             _ -> Left $ ExpectedUnit $ env ^. envNames <$> ty
         Case a bs -> do
-          (usages', usage, aTy) <- infer env a u
-          checkBranches (env & envUsages .~ usages') (a, usage, aTy) bs u ty
+          (usages', usage, aTy) <- infer varCost env a u
+          checkBranches varCost (env & envUsages .~ usages') (a, usage, aTy) bs u ty
         _ -> do
-          (usages', _, tmTy) <- infer env tm u
+          (usages', _, tmTy) <- infer varCost env tm u
           if tmTy == ty
             then pure usages'
             else Left $ TypeMismatch (env ^. envNames <$> ty) (env ^. envNames <$> tmTy)
@@ -530,7 +541,7 @@ checkType ::
   Ty a l x ->
   Either (TypeError l a) (x -> Maybe Usage)
 checkType env tm =
-  check (env & envUsages %~ ((Zero <$) .)) tm Zero
+  check Zero (env & envUsages %~ ((Zero <$) .)) tm Zero
 
 checkTerm ::
   (Ord x, Ord a) =>
@@ -538,17 +549,18 @@ checkTerm ::
   Term a l x ->
   Ty a l x ->
   Either (TypeError l a) (x -> Maybe Usage)
-checkTerm env tm = check env tm One
+checkTerm env tm = check One env tm One
 
 infer ::
   HasCallStack =>
   (Ord x, Ord a) =>
+  Usage ->
   Env a l x ->
   Term a l x ->
   Usage ->
   Either (TypeError l a) (x -> Maybe Usage, Usage, Ty a l x)
-infer _ _ Many = error "infer called with usage Many"
-infer env tm u =
+infer _ _ _ Many = error "infer called with usage Many"
+infer varCost env tm u =
   over (mapped . _3) (eval $ env ^. envDepth) $ -- post compute
     case tm of
       Var a -> do
@@ -562,35 +574,34 @@ infer env tm u =
             (Left . NotInScope $ view envNames env a)
             pure
             (view envUsages env a)
-        case (u, u') of
+        case (varCost, u') of
           (Zero, _) -> pure (env ^. envUsages, u', aTy)
           (One, Zero) -> Left $ UsingErased $ view envNames env a
           (One, One) ->
             pure (\x -> Zero <$ guard (x == a) <|> view envUsages env x, u', aTy)
           (One, Many) -> pure (env ^. envUsages, u', aTy)
           (Many, Zero) -> Left $ UsingErased $ view envNames env a
-          (Many, One) ->
-            pure (\x -> Zero <$ guard (x == a) <|> view envUsages env x, u', aTy)
+          (Many, One) -> Left $ OverusedLinear $ view envNames env a
           (Many, Many) -> pure (env ^. envUsages, u', aTy)
       Ann a u' b -> do
         _ <- checkType env b Type
-        usages' <- check env a u' b
+        usages' <- check varCost env a u' b
         pure (usages', u', b)
       App a b -> do
-        (usages', _, aTy) <- infer env a u
+        (usages', _, aTy) <- infer varCost env a u
         case aTy of
           Pi u' _ s t -> do
             let u'' = if u == Zero || u' == Zero then Zero else One
-            usages'' <- check (env & envUsages .~ usages') b u'' s
+            usages'' <- check (times varCost u') (env & envUsages .~ usages') b u'' s
             pure (usages'', u, instantiate1 (Ann b u'' s) t)
           _ -> Left $ ExpectedPi $ env ^. envNames <$> aTy
       Fst a -> do
-        (usages', _, aTy) <- infer env a u
+        (usages', _, aTy) <- infer varCost env a u
         case aTy of
           With _ s _ -> pure (usages', u, s)
           _ -> Left $ ExpectedWith $ env ^. envNames <$> aTy
       Snd a -> do
-        (usages', _, aTy) <- infer env a u
+        (usages', _, aTy) <- infer varCost env a u
         case aTy of
           With _ _ t -> pure (usages', u, instantiate1 (Fst a) t)
           _ -> Left $ ExpectedWith $ env ^. envNames <$> aTy
@@ -602,7 +613,7 @@ inferType ::
   Env a l x ->
   Term a l x ->
   Either (TypeError l a) (x -> Maybe Usage, Usage, Ty a l x)
-inferType env tm = infer (env & envUsages %~ ((Zero <$) .)) tm Zero
+inferType env tm = infer Zero (env & envUsages %~ ((Zero <$) .)) tm Zero
 
 inferTerm ::
   HasCallStack =>
@@ -610,4 +621,4 @@ inferTerm ::
   Env a l x ->
   Term a l x ->
   Either (TypeError l a) (x -> Maybe Usage, Usage, Ty a l x)
-inferTerm env tm = infer env tm One
+inferTerm env tm = infer One env tm One

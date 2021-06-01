@@ -118,7 +118,7 @@ data Term n l a
   | Pi Usage (Maybe n) (Term n l a) (Scope (Name n ()) (Term n l) a)
   | App (Term n l a) (Term n l a)
   | MkTensor (Term n l a) (Term n l a)
-  | Tensor n (Term n l a) (Scope (Name n ()) (Term n l) a)
+  | Tensor n Usage (Term n l a) (Scope (Name n ()) (Term n l) a)
   | UnpackTensor n n (Term n l a) (Scope (Name n Bool) (Term n l) a)
   | MkWith (Term n l a) (Term n l a)
   | With n (Term n l a) (Scope (Name n ()) (Term n l) a)
@@ -144,7 +144,7 @@ instance Eq1 (Term n l) where
     a == a' && liftEq f b b' && liftEq f c c'
   liftEq f (App a b) (App a' b') = liftEq f a a' && liftEq f b b'
   liftEq f (MkTensor a b) (MkTensor a' b') = liftEq f a a' && liftEq f b b'
-  liftEq f (Tensor _ a b) (Tensor _ a' b') = liftEq f a a' && liftEq f b b'
+  liftEq f (Tensor _ u a b) (Tensor _ u' a' b') = u == u' && liftEq f a a' && liftEq f b b'
   liftEq f (UnpackTensor _ _ a b) (UnpackTensor _ _ a' b') =
     liftEq f a a' && liftEq f b b'
   liftEq f (MkWith a b) (MkWith a' b') = liftEq f a a' && liftEq f b b'
@@ -173,7 +173,7 @@ instance Monad (Term n l) where
       Pi a n b c -> Pi a n (b >>= f) (c >>>= f)
       App a b -> App (a >>= f) (b >>= f)
       MkTensor a b -> MkTensor (a >>= f) (b >>= f)
-      Tensor n a b -> Tensor n (a >>= f) (b >>>= f)
+      Tensor n u a b -> Tensor n u (a >>= f) (b >>>= f)
       UnpackTensor n1 n2 a b -> UnpackTensor n1 n2 (a >>= f) (b >>>= f)
       MkWith a b -> MkWith (a >>= f) (b >>= f)
       With n a b -> With n (a >>= f) (b >>>= f)
@@ -208,8 +208,8 @@ arr a b = Pi Many Nothing a $ lift b
 limp :: Term n l a -> Term n l a -> Term n l a
 limp a b = Pi One Nothing a $ lift b
 
-tensor :: Eq a => (a, Ty a l a) -> Ty a l a -> Ty a l a
-tensor (a, ty) = Tensor a ty . abstract1Name a
+tensor :: Eq a => (a, Usage, Ty a l a) -> Ty a l a -> Ty a l a
+tensor (a, u, ty) = Tensor a u ty . abstract1Name a
 
 with :: Eq a => (a, Ty a l a) -> Ty a l a -> Ty a l a
 with (a, ty) = With a ty . abstract1Name a
