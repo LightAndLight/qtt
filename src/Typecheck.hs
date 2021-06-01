@@ -8,7 +8,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Typecheck where
+module Typecheck (
+  Env (..),
+  checkType,
+  checkTerm,
+  inferType,
+  inferTerm,
+) where
 
 import Bound.Name (Name (..), instantiate1Name, instantiateName)
 import Bound.Scope (fromScope, instantiate1, toScope)
@@ -382,15 +388,6 @@ checkBranches env (inTm, inUsage, inTy) bs u outTy = do
  where
   (inTyCon, _) = unfoldApps inTy
 
-checkZero ::
-  (Ord x, Ord a) =>
-  Env a l x ->
-  Term a l x ->
-  Ty a l x ->
-  Either (TypeError l a) (x -> Maybe Usage)
-checkZero env tm =
-  check (env & envUsages %~ ((Zero <$) .)) tm Zero . eval (env ^. envDepth)
-
 check ::
   HasCallStack =>
   (Ord x, Ord a) =>
@@ -410,9 +407,9 @@ check env tm u ty_ =
         Pi _ _ a b ->
           case ty of
             Type -> do
-              _ <- checkZero env a Type
+              _ <- checkType env a Type
               _ <-
-                checkZero
+                checkType
                   ( deeperEnv
                       Bound.name
                       (const (Just $ BindingEntry a) . extract)
@@ -447,9 +444,9 @@ check env tm u ty_ =
         Tensor _ a b ->
           case ty of
             Type -> do
-              _ <- checkZero env a Type
+              _ <- checkType env a Type
               _ <-
-                checkZero
+                checkType
                   ( deeperEnv
                       Bound.name
                       (const (Just $ BindingEntry a) . extract)
@@ -489,9 +486,9 @@ check env tm u ty_ =
         With _ a b ->
           case ty of
             Type -> do
-              _ <- checkZero env a Type
+              _ <- checkType env a Type
               _ <-
-                checkZero
+                checkType
                   ( deeperEnv
                       Bound.name
                       (const (Just $ BindingEntry a))
@@ -526,6 +523,23 @@ check env tm u ty_ =
             then pure usages'
             else Left $ TypeMismatch (env ^. envNames <$> ty) (env ^. envNames <$> tmTy)
 
+checkType ::
+  (Ord x, Ord a) =>
+  Env a l x ->
+  Term a l x ->
+  Ty a l x ->
+  Either (TypeError l a) (x -> Maybe Usage)
+checkType env tm =
+  check (env & envUsages %~ ((Zero <$) .)) tm Zero
+
+checkTerm ::
+  (Ord x, Ord a) =>
+  Env a l x ->
+  Term a l x ->
+  Ty a l x ->
+  Either (TypeError l a) (x -> Maybe Usage)
+checkTerm env tm = check env tm One
+
 infer ::
   HasCallStack =>
   (Ord x, Ord a) =>
@@ -559,7 +573,7 @@ infer env tm u =
             pure (\x -> Zero <$ guard (x == a) <|> view envUsages env x, u', aTy)
           (Many, Many) -> pure (env ^. envUsages, u', aTy)
       Ann a u' b -> do
-        _ <- checkZero env b Type
+        _ <- checkType env b Type
         usages' <- check env a u' b
         pure (usages', u', b)
       App a b -> do
@@ -581,3 +595,19 @@ infer env tm u =
           With _ _ t -> pure (usages', u, instantiate1 (Fst a) t)
           _ -> Left $ ExpectedWith $ env ^. envNames <$> aTy
       _ -> Left $ Can'tInfer $ env ^. envNames <$> tm
+
+inferType ::
+  HasCallStack =>
+  (Ord x, Ord a) =>
+  Env a l x ->
+  Term a l x ->
+  Either (TypeError l a) (x -> Maybe Usage, Usage, Ty a l x)
+inferType env tm = infer (env & envUsages %~ ((Zero <$) .)) tm Zero
+
+inferTerm ::
+  HasCallStack =>
+  (Ord x, Ord a) =>
+  Env a l x ->
+  Term a l x ->
+  Either (TypeError l a) (x -> Maybe Usage, Usage, Ty a l x)
+inferTerm env tm = infer env tm One
