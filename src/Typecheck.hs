@@ -28,6 +28,7 @@ import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Semiring (times)
 import Data.Set (Set)
+import GHC.Stack (HasCallStack)
 
 import qualified Bound.Name as Bound
 import qualified Data.Map as Map
@@ -391,12 +392,14 @@ checkZero env tm =
   check (env & envUsages %~ ((Zero <$) .)) tm Zero . eval (env ^. envDepth)
 
 check ::
+  HasCallStack =>
   (Ord x, Ord a) =>
   Env a l x ->
   Term a l x ->
   Usage ->
   Ty a l x ->
   Either (TypeError l a) (x -> Maybe Usage)
+check _ _ Many _ = error "check called with usage Many"
 check env tm u ty_ =
   let ty = eval (env ^. envDepth) ty_ -- pre-compute
    in case tm of
@@ -524,11 +527,13 @@ check env tm u ty_ =
             else Left $ TypeMismatch (env ^. envNames <$> ty) (env ^. envNames <$> tmTy)
 
 infer ::
+  HasCallStack =>
   (Ord x, Ord a) =>
   Env a l x ->
   Term a l x ->
   Usage ->
   Either (TypeError l a) (x -> Maybe Usage, Usage, Ty a l x)
+infer _ _ Many = error "infer called with usage Many"
 infer env tm u =
   over (mapped . _3) (eval $ env ^. envDepth) $ -- post compute
     case tm of
