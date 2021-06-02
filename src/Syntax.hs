@@ -29,6 +29,15 @@ import qualified Text.PrettyPrint.ANSI.Leijen as Pretty
 data Usage = Zero | One | Many
   deriving (Eq, Show)
 
+instance Ord Usage where
+  compare Zero Zero = EQ
+  compare Zero _ = LT
+  compare _ Zero = GT
+  compare One One = EQ
+  compare One _ = LT
+  compare _ One = GT
+  compare Many Many = EQ
+
 instance Pretty Usage where
   pretty Zero = Pretty.char '0'
   pretty One = Pretty.char '1'

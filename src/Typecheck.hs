@@ -135,32 +135,6 @@ unsafeCheckConsumed names u a usages =
         (One, One) -> Left $ UnusedLinear $ names a
         _ -> pure ()
 
-mergeUsages ::
-  Ord x =>
-  Context x Usage ->
-  Context x Usage ->
-  Context x Usage
-mergeUsages =
-  Context.zipWithKey
-    ( \_ ->
-        \case
-          These uA uB ->
-            case (uA, uB) of
-              (Zero, Zero) -> Just Zero
-              (Zero, One) -> Just Zero
-              (Zero, Many) -> error "mergeUsages: zero as many"
-              (One, Zero) -> Just Zero
-              (One, One) -> Just One
-              (One, Many) -> error "mergeUsages: one as many"
-              (Many, Zero) -> error "mergeUsages: many as zero"
-              (Many, One) -> error "mergeUsages: many as one"
-              (Many, Many) -> Just Many
-          This _ ->
-            Nothing
-          That _ ->
-            Nothing
-    )
-
 {- | Apply a list of arguments to a function, throwing an error
  if the function cannot be fully applied
 -}
@@ -521,7 +495,15 @@ check varCost env tm u ty_ =
             With s t -> do
               usagesA <- check varCost env a u s
               usagesB <- check varCost env b u t
-              pure $ mergeUsages usagesA usagesB
+              pure $
+                Context.zipWithKey
+                  ( \_ -> \case
+                      This u1 -> Just u1
+                      That u2 -> Just u2
+                      These u1 u2 -> Just $ max u1 u2
+                  )
+                  usagesA
+                  usagesB
             _ -> Left $ ExpectedWith $ env ^. envNames <$> ty
         Unit ->
           case ty of
