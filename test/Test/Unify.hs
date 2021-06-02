@@ -31,7 +31,7 @@ unifySpec =
       doUnify (lam "x" $ pure "x") (lam "x" $ MkTensor (pure "y") (pure "z"))
         `shouldBe` Left (TypeMismatch (Var "x") (MkTensor (pure "y") (pure "z")))
     it "(\\x => x) ~ (\\x -> MkUnit)  fails" $
-      doUnify (lam "x" $ pure "x") (lam "x" $ MkUnit)
+      doUnify (lam "x" $ pure "x") (lam "x" MkUnit)
         `shouldBe` Left (TypeMismatch (Var "x") MkUnit)
     it "(\\x => a) ~ (\\x -> (b, c))  succeeds with {a -> (b, c)}" $
       doUnify (lam "x" $ pure "a") (lam "x" $ MkTensor (pure "b") (pure "c"))

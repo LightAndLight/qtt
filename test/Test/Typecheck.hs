@@ -436,7 +436,7 @@ typecheckSpec =
             )
             (pure "Bool")
         )
-    it "A :0 Type, B :0 Type, x : (A & B)  |- (case x of { y => y }) :1 (A & B)" $ do
+    it "A :0 Type, B :0 Type, x : (A & B)  |- (case x of { y => y }) :1 (A & B)" $
       assertRight
         ( doCheckTerm
             [ ("A", BindingEntry Type)
@@ -525,8 +525,8 @@ typecheckSpec =
                       ]
                   )
               )
-            , ("False", CtorEntry $ falseType)
-            , ("True", CtorEntry $ trueType)
+            , ("False", CtorEntry falseType)
+            , ("True", CtorEntry trueType)
             ,
               ( "BoolS"
               , InductiveEntry
@@ -537,8 +537,8 @@ typecheckSpec =
                       ]
                   )
               )
-            , ("FalseS", CtorEntry $ falseSType)
-            , ("TrueS", CtorEntry $ trueSType)
+            , ("FalseS", CtorEntry falseSType)
+            , ("TrueS", CtorEntry trueSType)
             , ("b", BindingEntry $ pure "Bool")
             , ("x", BindingEntry $ App (pure "BoolS") (pure "b"))
             ]
@@ -581,8 +581,8 @@ typecheckSpec =
                       ]
                   )
               )
-            , ("False", CtorEntry $ falseType)
-            , ("True", CtorEntry $ trueType)
+            , ("False", CtorEntry falseType)
+            , ("True", CtorEntry trueType)
             ,
               ( "BoolS"
               , InductiveEntry

@@ -28,12 +28,12 @@ prettyPattern p =
 
 prettyBranch :: Pretty n => (a -> Doc) -> Branch n (Term n l) a -> Doc
 prettyBranch _ (BranchImpossible a) =
-  Pretty.hsep $
+  Pretty.hsep
     [ prettyPattern a
     , Pretty.text "impossible"
     ]
 prettyBranch pvar (Branch a b) =
-  Pretty.hsep $
+  Pretty.hsep
     [ prettyPattern a
     , Pretty.text "=>"
     , hangCase
