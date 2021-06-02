@@ -45,7 +45,7 @@ import Unify
 data Env a l x = Env
   { _envDepth :: a -> x
   , _envNames :: x -> a
-  , _envTypes :: x -> Maybe (Entry a l x)
+  , _envTypes :: Context x (Entry a l x)
   , _envUsages :: Context x Usage
   }
 makeLenses ''Env
@@ -188,7 +188,7 @@ matchSubst inTm t =
 deeperEnv ::
   (Ord b, Ord x) =>
   (b -> a) ->
-  (b -> Maybe (Entry a l x)) ->
+  Map b (Entry a l x) ->
   Map b Usage ->
   Env a l x ->
   Env a l (Var b x)
@@ -196,7 +196,7 @@ deeperEnv names types usages env =
   Env
     { _envDepth = F . _envDepth env
     , _envNames = unvar names (_envNames env)
-    , _envTypes = fmap (fmap F) . unvar types (_envTypes env)
+    , _envTypes = fmap F <$> Context.merge types (_envTypes env)
     , _envUsages = Context.merge usages (_envUsages env)
     }
 
@@ -223,7 +223,7 @@ checkBranchesMatching varCost env (inTm, inUsage, inTy) (Branch p v :| bs) u out
           varCost
           ( deeperEnv
               (\V -> n)
-              (const $ Just (BindingEntry inTy))
+              (Map.singleton V $ BindingEntry inTy)
               (Map.singleton V inUsage)
               env
           )
@@ -275,7 +275,7 @@ checkBranchesMatching varCost env (inTm, inUsage, inTy) (Branch p v :| bs) u out
           varCost
           ( deeperEnv
               (\V -> n)
-              (const $ Just (BindingEntry inTy))
+              (Map.singleton V $ BindingEntry inTy)
               (Map.singleton V inUsage)
               env
           )
@@ -303,7 +303,7 @@ checkBranchesMatching varCost env (inTm, inUsage, inTy) (Branch p v :| bs) u out
           varCost
           ( deeperEnv
               (\(C ix) -> ns !! ix)
-              (Just . BindingEntry . (argTys !!) . pathVal)
+              (Map.fromList $ zipWith (\ix argTy -> (C ix, BindingEntry argTy)) [0 ..] argTys)
               (Map.fromList $ zipWith (\ix argUsage -> (C ix, times inUsage argUsage)) [0 ..] argUsages)
               env
           )
@@ -364,7 +364,7 @@ checkBranches varCost env (inTm, inUsage, inTy) bs u outTy = do
           maybe
             (Left $ NotInScope $ view envNames env c)
             pure
-            (view envTypes env c)
+            (view (envTypes . to (flip Context.lookup)) env c)
         pure $
           case cEntry of
             InductiveEntry _ ctors -> Just ctors
@@ -407,7 +407,7 @@ check varCost env tm u ty_ =
                 checkType
                   ( deeperEnv
                       (const n)
-                      (const (Just $ BindingEntry a))
+                      (Map.singleton () $ BindingEntry a)
                       (Map.singleton () Zero)
                       env
                   )
@@ -423,7 +423,7 @@ check varCost env tm u ty_ =
                   varCost
                   ( deeperEnv
                       (const n)
-                      (const (Just $ BindingEntry s))
+                      (Map.singleton () $ BindingEntry s)
                       (Map.singleton () (times u' u))
                       env
                   )
@@ -446,7 +446,7 @@ check varCost env tm u ty_ =
                 checkType
                   ( deeperEnv
                       (const n)
-                      (const (Just $ BindingEntry a))
+                      (Map.singleton () $ BindingEntry a)
                       (Map.singleton () Zero)
                       env
                   )
@@ -470,7 +470,7 @@ check varCost env tm u ty_ =
                   varCost
                   ( deeperEnv
                       (bool n1 n2)
-                      (Just . BindingEntry . bool s (instantiate1 (Fst a) t))
+                      (Map.fromList [(False, BindingEntry s), (True, BindingEntry $ instantiate1 (Fst a) t)])
                       (Map.fromList [(False, aUsage), (True, u)])
                       (env & envUsages .~ usages')
                   )
@@ -556,7 +556,7 @@ infer varCost env tm u =
           maybe
             (Left . NotInScope $ view envNames env a)
             (pure . _entryType)
-            (view envTypes env a)
+            (view (envTypes . to (flip Context.lookup)) env a)
         u' <-
           maybe
             (Left . NotInScope $ view envNames env a)

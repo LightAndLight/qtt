@@ -19,20 +19,20 @@ import Typecheck
 import Test.Utils
 
 doCheckType ::
-  (String -> Maybe (Entry String String String)) ->
+  [(String, Entry String String String)] ->
   [(String, Usage)] ->
   Term String String String ->
   Ty String String String ->
   Either (TypeError String String) (Context String Usage)
-doCheckType a b = checkType (Env id id a $ Context.fromList b)
+doCheckType a b = checkType (Env id id (Context.fromList a) (Context.fromList b))
 
 doCheckTerm ::
-  (String -> Maybe (Entry String String String)) ->
+  [(String, Entry String String String)] ->
   [(String, Usage)] ->
   Term String String String ->
   Ty String String String ->
   Either (TypeError String String) (Context String Usage)
-doCheckTerm a b = checkTerm (Env id id a $ Context.fromList b)
+doCheckTerm a b = checkTerm (Env id id (Context.fromList a) (Context.fromList b))
 
 typecheckSpec :: Spec
 typecheckSpec =
@@ -40,28 +40,28 @@ typecheckSpec =
     it "(\\A => \\x => x) :0 (A :0 Type) -> (x :1 A) -> A" $
       assertRight $
         doCheckType
-          (const Nothing)
+          []
           []
           (lam "A" $ lam "x" $ pure "x")
           (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
     it "(\\A => \\x => x) :1 (A :0 Type) -> (x :1 A) -> A" $
       assertRight $
         doCheckTerm
-          (const Nothing)
+          []
           []
           (lam "A" $ lam "x" $ pure "x")
           (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
     it "(\\A => \\x => x) :0 (A :0 Type) -> (x :0 A) -> A" $
       assertRight $
         doCheckType
-          (const Nothing)
+          []
           []
           (lam "A" $ lam "x" $ pure "x")
           (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
     it "(\\A => \\x => x) :1 (A :0 Type) -> (x :0 A) -> A   invalid" $
       assertLeft (UsingErased "x") $
         doCheckTerm
-          (const Nothing)
+          []
           []
           (lam "A" $ lam "x" $ pure "x")
           (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
@@ -69,7 +69,7 @@ typecheckSpec =
       assertLeft
         (UnusedLinear "x")
         ( doCheckTerm
-            (const Nothing)
+            []
             []
             (lam "A" $ lam "x" $ lam "y" $ pure "y")
             ( forall_ ("A", Type) $
@@ -81,7 +81,7 @@ typecheckSpec =
     it "(\\A => \\x => \\y => x) :1 (A :0 Type) -> (x :1 A) -> (y :w A) -> A" $
       assertRight
         ( doCheckTerm
-            (const Nothing)
+            []
             []
             (lam "A" $ lam "x" $ lam "y" $ pure "x")
             ( forall_ ("A", Type) $
@@ -94,7 +94,7 @@ typecheckSpec =
       assertLeft
         (UnusedLinear "A")
         ( doCheckTerm
-            (const Nothing)
+            []
             []
             (lam "A" $ lam "x" $ pure "x")
             ( lpi ("A", Type) $
@@ -105,7 +105,7 @@ typecheckSpec =
     it "(\\A => \\x => x) :1 (A :0 Type) -> (x :1 A) -> A" $
       assertRight
         ( doCheckTerm
-            (const Nothing)
+            []
             []
             (lam "A" $ lam "x" $ pure "x")
             ( forall_ ("A", Type) $
@@ -117,7 +117,7 @@ typecheckSpec =
       assertLeft
         (OverusedLinear "x")
         ( doCheckTerm
-            (const Nothing)
+            []
             []
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             ( forall_ ("A", Type) $
@@ -128,7 +128,7 @@ typecheckSpec =
     it "(\\A => \\x => (x, x)) :1 (A :0 Type) -> (x :w A) -> (_ : A ⨂ A)" $
       assertRight
         ( doCheckTerm
-            (const Nothing)
+            []
             []
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             ( forall_ ("A", Type) $
@@ -145,11 +145,9 @@ typecheckSpec =
       assertLeft
         (OverusedLinear "b")
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                "B" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [ ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            ]
             [ ("A", Zero)
             , ("B", Zero)
             ]
@@ -163,11 +161,9 @@ typecheckSpec =
       -- argument linearly or irrelevantly
       assertRight
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                "B" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [ ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            ]
             [ ("A", Zero)
             , ("B", Zero)
             ]
@@ -180,10 +176,7 @@ typecheckSpec =
       assertLeft
         (UnusedLinear "b")
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [("A", BindingEntry Type)]
             [("A", Zero)]
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "a"))
             ( arr (tensor ("_", Many, pure "A") (pure "A")) $
@@ -193,10 +186,7 @@ typecheckSpec =
     it "(\\x => let (a, b) = x in b) :1 (x : (_ : A ⨂ A)) -> A" $
       assertRight
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [("A", BindingEntry Type)]
             [("A", Zero)]
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "b"))
             ( arr (tensor ("_", Many, pure "A") (pure "A")) $
@@ -206,10 +196,7 @@ typecheckSpec =
     it "(\\x => let (a, b) = x in b) :1 (x : (_ :0 A ⨂ A)) -> A" $
       assertRight
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [("A", BindingEntry Type)]
             [("A", Zero)]
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "b"))
             ( arr (tensor ("_", Zero, pure "A") (pure "A")) $
@@ -220,10 +207,7 @@ typecheckSpec =
       assertLeft
         (UnusedLinear "a")
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [("A", BindingEntry Type)]
             [("A", Zero)]
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "b"))
             ( arr (tensor ("_", One, pure "A") (pure "A")) $
@@ -233,10 +217,7 @@ typecheckSpec =
     it "(\\x => fst x) :1 (x : (A & A)) -o A" $
       assertRight
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [("A", BindingEntry Type)]
             [("A", Zero)]
             (lam "x" $ Fst $ pure "x")
             ( limp (with (pure "A") (pure "A")) $
@@ -246,10 +227,7 @@ typecheckSpec =
     it "(\\x => snd x) :1 (x : (A & A)) -o A" $
       assertRight
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [("A", BindingEntry Type)]
             [("A", Zero)]
             (lam "x" $ Snd $ pure "x")
             ( limp (with (pure "A") (pure "A")) $
@@ -259,11 +237,9 @@ typecheckSpec =
     it "(\\x => (fst x, snd x)) :1 (x : (A & B)) -o (A & B)" $
       assertRight
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                "B" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [ ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            ]
             [ ("A", Zero)
             , ("B", Zero)
             ]
@@ -276,11 +252,9 @@ typecheckSpec =
       assertLeft
         (UnusedLinear "y")
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                "B" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [ ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            ]
             [ ("A", Zero)
             , ("B", Zero)
             ]
@@ -293,10 +267,7 @@ typecheckSpec =
     it "(\\x => (x, x)) :1 (x : A) -o (A & A)" $
       assertRight
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [("A", BindingEntry Type)]
             [("A", Zero)]
             (lam "x" $ MkWith (pure "x") (pure "x"))
             ( limp (pure "A") $
@@ -312,10 +283,7 @@ typecheckSpec =
       assertLeft
         (UnusedLinear "b")
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [("A", BindingEntry Type)]
             [("A", Zero)]
             ( lam "x" $
                 unpackTensor ("a", "b") (pure "x") $
@@ -329,10 +297,7 @@ typecheckSpec =
       assertLeft
         (UnusedLinear "b")
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [("A", BindingEntry Type)]
             [("A", Zero)]
             ( lam "x" $
                 unpackTensor ("a", "b") (pure "x") $
@@ -345,10 +310,7 @@ typecheckSpec =
     it "(\\x => (fst x, snd x)) :1 (x : (A & B)) -> (_ : A ⨂ B)" $
       assertRight
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [("A", BindingEntry Type)]
             [("A", Zero)]
             ( lam "x" $
                 MkTensor (Fst $ pure "x") (Snd $ pure "x")
@@ -361,10 +323,7 @@ typecheckSpec =
       assertLeft
         (OverusedLinear "x")
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [("A", BindingEntry Type)]
             [("A", Zero)]
             ( lam "x" $
                 MkTensor (Fst $ pure "x") (Snd $ pure "x")
@@ -377,11 +336,9 @@ typecheckSpec =
       assertLeft
         (UsingErased "x")
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                "B" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [ ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            ]
             [ ("A", Zero)
             , ("B", Zero)
             ]
@@ -397,11 +354,9 @@ typecheckSpec =
     it "(\\x => \\f => f x) :1 A -> (b : ∀(a : A). B) -> B" $
       assertRight
         ( doCheckTerm
-            ( \case
-                "A" -> Just $ BindingEntry Type
-                "B" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [ ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            ]
             [ ("A", Zero)
             , ("B", Zero)
             ]
@@ -426,21 +381,20 @@ typecheckSpec =
 
       assertRight
         ( doCheckTerm
-            ( \case
-                "List" ->
-                  Just $
-                    InductiveEntry
-                      (arr Type Type)
-                      ( Map.fromList
-                          [ ("Nil", nilType)
-                          , ("Cons", consType)
-                          ]
-                      )
-                "Nil" -> Just . CtorEntry $ nilType
-                "Cons" -> Just . CtorEntry $ consType
-                "A" -> Just $ BindingEntry Type
-                _ -> Nothing
-            )
+            [
+              ( "List"
+              , InductiveEntry
+                  (arr Type Type)
+                  ( Map.fromList
+                      [ ("Nil", nilType)
+                      , ("Cons", consType)
+                      ]
+                  )
+              )
+            , ("Nil", CtorEntry nilType)
+            , ("Cons", CtorEntry consType)
+            , ("A", BindingEntry Type)
+            ]
             [ ("List", Many)
             , ("Nil", Many)
             , ("Cons", Many)
@@ -455,21 +409,20 @@ typecheckSpec =
 
       assertRight
         ( doCheckTerm
-            ( \case
-                "Bool" ->
-                  Just $
-                    InductiveEntry
-                      Type
-                      ( Map.fromList
-                          [ ("False", falseType)
-                          , ("True", trueType)
-                          ]
-                      )
-                "False" -> Just . CtorEntry $ falseType
-                "True" -> Just . CtorEntry $ trueType
-                "x" -> Just $ BindingEntry $ pure "Bool"
-                _ -> Nothing
-            )
+            [
+              ( "Bool"
+              , InductiveEntry
+                  Type
+                  ( Map.fromList
+                      [ ("False", falseType)
+                      , ("True", trueType)
+                      ]
+                  )
+              )
+            , ("False", CtorEntry falseType)
+            , ("True", CtorEntry trueType)
+            , ("x", BindingEntry $ pure "Bool")
+            ]
             [ ("Bool", Many)
             , ("False", Many)
             , ("True", Many)
@@ -486,12 +439,10 @@ typecheckSpec =
     it "A :0 Type, B :0 Type, x : (A & B)  |- (case x of { y => y }) :1 (A & B)" $ do
       assertRight
         ( doCheckTerm
-            ( \case
-                "A" -> Just . BindingEntry $ Type
-                "B" -> Just . BindingEntry $ Type
-                "x" -> Just $ BindingEntry $ with (pure "A") (pure "B")
-                _ -> Nothing
-            )
+            [ ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            , ("x", BindingEntry $ with (pure "A") (pure "B"))
+            ]
             [ ("A", Zero)
             , ("B", Zero)
             , ("x", Many)
@@ -511,33 +462,33 @@ typecheckSpec =
 
       assertRight
         ( doCheckTerm
-            ( \case
-                "Bool" ->
-                  Just $
-                    InductiveEntry
-                      Type
-                      ( Map.fromList
-                          [ ("False", falseType)
-                          , ("True", trueType)
-                          ]
-                      )
-                "False" -> Just . CtorEntry $ falseType
-                "True" -> Just . CtorEntry $ trueType
-                "BoolS" ->
-                  Just $
-                    InductiveEntry
-                      (arr (pure "Bool") Type)
-                      ( Map.fromList
-                          [ ("FalseS", falseSType)
-                          , ("TrueS", trueSType)
-                          ]
-                      )
-                "FalseS" -> Just . CtorEntry $ falseSType
-                "TrueS" -> Just . CtorEntry $ trueSType
-                "b" -> Just $ BindingEntry $ pure "Bool"
-                "x" -> Just $ BindingEntry $ App (pure "BoolS") (pure "b")
-                _ -> Nothing
-            )
+            [
+              ( "Bool"
+              , InductiveEntry
+                  Type
+                  ( Map.fromList
+                      [ ("False", falseType)
+                      , ("True", trueType)
+                      ]
+                  )
+              )
+            , ("False", CtorEntry falseType)
+            , ("True", CtorEntry trueType)
+            ,
+              ( "BoolS"
+              , InductiveEntry
+                  (arr (pure "Bool") Type)
+                  ( Map.fromList
+                      [ ("FalseS", falseSType)
+                      , ("TrueS", trueSType)
+                      ]
+                  )
+              )
+            , ("FalseS", CtorEntry falseSType)
+            , ("TrueS", CtorEntry trueSType)
+            , ("b", BindingEntry $ pure "Bool")
+            , ("x", BindingEntry $ App (pure "BoolS") (pure "b"))
+            ]
             [ ("Bool", Many)
             , ("False", Many)
             , ("True", Many)
@@ -564,33 +515,33 @@ typecheckSpec =
       assertLeft
         NotImpossible
         ( doCheckTerm
-            ( \case
-                "Bool" ->
-                  Just $
-                    InductiveEntry
-                      Type
-                      ( Map.fromList
-                          [ ("False", falseType)
-                          , ("True", trueType)
-                          ]
-                      )
-                "False" -> Just . CtorEntry $ falseType
-                "True" -> Just . CtorEntry $ trueType
-                "BoolS" ->
-                  Just $
-                    InductiveEntry
-                      (arr (pure "Bool") Type)
-                      ( Map.fromList
-                          [ ("FalseS", falseSType)
-                          , ("TrueS", trueSType)
-                          ]
-                      )
-                "FalseS" -> Just . CtorEntry $ falseSType
-                "TrueS" -> Just . CtorEntry $ trueSType
-                "b" -> Just $ BindingEntry $ pure "Bool"
-                "x" -> Just $ BindingEntry $ App (pure "BoolS") (pure "b")
-                _ -> Nothing
-            )
+            [
+              ( "Bool"
+              , InductiveEntry
+                  Type
+                  ( Map.fromList
+                      [ ("False", falseType)
+                      , ("True", trueType)
+                      ]
+                  )
+              )
+            , ("False", CtorEntry $ falseType)
+            , ("True", CtorEntry $ trueType)
+            ,
+              ( "BoolS"
+              , InductiveEntry
+                  (arr (pure "Bool") Type)
+                  ( Map.fromList
+                      [ ("FalseS", falseSType)
+                      , ("TrueS", trueSType)
+                      ]
+                  )
+              )
+            , ("FalseS", CtorEntry $ falseSType)
+            , ("TrueS", CtorEntry $ trueSType)
+            , ("b", BindingEntry $ pure "Bool")
+            , ("x", BindingEntry $ App (pure "BoolS") (pure "b"))
+            ]
             [ ("Bool", Many)
             , ("False", Many)
             , ("True", Many)
@@ -620,33 +571,33 @@ typecheckSpec =
             (App (pure "BoolS") (pure "True"))
         )
         ( doCheckTerm
-            ( \case
-                "Bool" ->
-                  Just $
-                    InductiveEntry
-                      Type
-                      ( Map.fromList
-                          [ ("False", falseType)
-                          , ("True", trueType)
-                          ]
-                      )
-                "False" -> Just . CtorEntry $ falseType
-                "True" -> Just . CtorEntry $ trueType
-                "BoolS" ->
-                  Just $
-                    InductiveEntry
-                      (arr (pure "Bool") Type)
-                      ( Map.fromList
-                          [ ("FalseS", falseSType)
-                          , ("TrueS", trueSType)
-                          ]
-                      )
-                "FalseS" -> Just . CtorEntry $ falseSType
-                "TrueS" -> Just . CtorEntry $ trueSType
-                "b" -> Just $ BindingEntry $ pure "Bool"
-                "x" -> Just $ BindingEntry $ App (pure "BoolS") (pure "b")
-                _ -> Nothing
-            )
+            [
+              ( "Bool"
+              , InductiveEntry
+                  Type
+                  ( Map.fromList
+                      [ ("False", falseType)
+                      , ("True", trueType)
+                      ]
+                  )
+              )
+            , ("False", CtorEntry $ falseType)
+            , ("True", CtorEntry $ trueType)
+            ,
+              ( "BoolS"
+              , InductiveEntry
+                  (arr (pure "Bool") Type)
+                  ( Map.fromList
+                      [ ("FalseS", falseSType)
+                      , ("TrueS", trueSType)
+                      ]
+                  )
+              )
+            , ("FalseS", CtorEntry falseSType)
+            , ("TrueS", CtorEntry trueSType)
+            , ("b", BindingEntry $ pure "Bool")
+            , ("x", BindingEntry $ App (pure "BoolS") (pure "b"))
+            ]
             [ ("Bool", Many)
             , ("False", Many)
             , ("True", Many)
@@ -672,32 +623,32 @@ typecheckSpec =
 
       assertRight
         ( doCheckTerm
-            ( \case
-                "Bool" ->
-                  Just $
-                    InductiveEntry
-                      Type
-                      ( Map.fromList
-                          [ ("False", falseType)
-                          , ("True", trueType)
-                          ]
-                      )
-                "False" -> Just . CtorEntry $ falseType
-                "True" -> Just . CtorEntry $ trueType
-                "BoolS" ->
-                  Just $
-                    InductiveEntry
-                      (arr (pure "Bool") Type)
-                      ( Map.fromList
-                          [ ("FalseS", falseSType)
-                          , ("TrueS", trueSType)
-                          ]
-                      )
-                "FalseS" -> Just . CtorEntry $ falseSType
-                "TrueS" -> Just . CtorEntry $ trueSType
-                "x" -> Just $ BindingEntry $ App (pure "BoolS") (pure "True")
-                _ -> Nothing
-            )
+            [
+              ( "Bool"
+              , InductiveEntry
+                  Type
+                  ( Map.fromList
+                      [ ("False", falseType)
+                      , ("True", trueType)
+                      ]
+                  )
+              )
+            , ("False", CtorEntry falseType)
+            , ("True", CtorEntry trueType)
+            ,
+              ( "BoolS"
+              , InductiveEntry
+                  (arr (pure "Bool") Type)
+                  ( Map.fromList
+                      [ ("FalseS", falseSType)
+                      , ("TrueS", trueSType)
+                      ]
+                  )
+              )
+            , ("FalseS", CtorEntry falseSType)
+            , ("TrueS", CtorEntry trueSType)
+            , ("x", BindingEntry $ App (pure "BoolS") (pure "True"))
+            ]
             [ ("Bool", Many)
             , ("False", Many)
             , ("True", Many)
@@ -724,21 +675,20 @@ typecheckSpec =
 
       assertRight
         ( doCheckTerm
-            ( \case
-                "Pair" ->
-                  Just $
-                    InductiveEntry
-                      (arr Type $ arr Type Type)
-                      ( Map.fromList
-                          [ ("MkPair", mkPairType)
-                          ]
-                      )
-                "MkPair" -> Just . CtorEntry $ mkPairType
-                "A" -> Just $ BindingEntry $ Type
-                "B" -> Just $ BindingEntry $ Type
-                "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
-                _ -> Nothing
-            )
+            [
+              ( "Pair"
+              , InductiveEntry
+                  (arr Type $ arr Type Type)
+                  ( Map.fromList
+                      [ ("MkPair", mkPairType)
+                      ]
+                  )
+              )
+            , ("MkPair", CtorEntry mkPairType)
+            , ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            , ("x", BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B"))
+            ]
             [ ("Pair", Many)
             , ("MkPair", Many)
             , ("A", Zero)
@@ -763,21 +713,20 @@ typecheckSpec =
       assertLeft
         (UnusedLinear "y")
         ( doCheckTerm
-            ( \case
-                "Pair" ->
-                  Just $
-                    InductiveEntry
-                      (arr Type $ arr Type Type)
-                      ( Map.fromList
-                          [ ("MkPair", mkPairType)
-                          ]
-                      )
-                "MkPair" -> Just . CtorEntry $ mkPairType
-                "A" -> Just $ BindingEntry $ Type
-                "B" -> Just $ BindingEntry $ Type
-                "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
-                _ -> Nothing
-            )
+            [
+              ( "Pair"
+              , InductiveEntry
+                  (arr Type $ arr Type Type)
+                  ( Map.fromList
+                      [ ("MkPair", mkPairType)
+                      ]
+                  )
+              )
+            , ("MkPair", CtorEntry mkPairType)
+            , ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            , ("x", BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B"))
+            ]
             [ ("Pair", Many)
             , ("MkPair", Many)
             , ("A", Zero)
@@ -802,22 +751,21 @@ typecheckSpec =
       assertLeft
         (OverusedLinear "a")
         ( doCheckTerm
-            ( \case
-                "Pair" ->
-                  Just $
-                    InductiveEntry
-                      (arr Type $ arr Type Type)
-                      ( Map.fromList
-                          [ ("MkPair", mkPairType)
-                          ]
-                      )
-                "MkPair" -> Just . CtorEntry $ mkPairType
-                "A" -> Just $ BindingEntry $ Type
-                "B" -> Just $ BindingEntry $ Type
-                "a" -> Just $ BindingEntry $ pure "A"
-                "b" -> Just $ BindingEntry $ pure "B"
-                _ -> Nothing
-            )
+            [
+              ( "Pair"
+              , InductiveEntry
+                  (arr Type $ arr Type Type)
+                  ( Map.fromList
+                      [ ("MkPair", mkPairType)
+                      ]
+                  )
+              )
+            , ("MkPair", CtorEntry mkPairType)
+            , ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            , ("a", BindingEntry $ pure "A")
+            , ("b", BindingEntry $ pure "B")
+            ]
             [ ("Pair", Many)
             , ("MkPair", Many)
             , ("A", Zero)
@@ -839,21 +787,20 @@ typecheckSpec =
       assertLeft
         (UsingErased "A")
         ( doCheckTerm
-            ( \case
-                "Pair" ->
-                  Just $
-                    InductiveEntry
-                      (arr Type $ arr Type Type)
-                      ( Map.fromList
-                          [ ("MkPair", mkPairType)
-                          ]
-                      )
-                "MkPair" -> Just . CtorEntry $ mkPairType
-                "A" -> Just $ BindingEntry $ Type
-                "B" -> Just $ BindingEntry $ Type
-                "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
-                _ -> Nothing
-            )
+            [
+              ( "Pair"
+              , InductiveEntry
+                  (arr Type $ arr Type Type)
+                  ( Map.fromList
+                      [ ("MkPair", mkPairType)
+                      ]
+                  )
+              )
+            , ("MkPair", CtorEntry mkPairType)
+            , ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            , ("x", BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B"))
+            ]
             [ ("Pair", Many)
             , ("MkPair", Many)
             , ("A", Zero)
@@ -877,21 +824,20 @@ typecheckSpec =
 
       assertRight
         ( doCheckTerm
-            ( \case
-                "Pair" ->
-                  Just $
-                    InductiveEntry
-                      (arr Type $ arr Type Type)
-                      ( Map.fromList
-                          [ ("MkPair", mkPairType)
-                          ]
-                      )
-                "MkPair" -> Just . CtorEntry $ mkPairType
-                "A" -> Just $ BindingEntry $ Type
-                "B" -> Just $ BindingEntry $ Type
-                "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
-                _ -> Nothing
-            )
+            [
+              ( "Pair"
+              , InductiveEntry
+                  (arr Type $ arr Type Type)
+                  ( Map.fromList
+                      [ ("MkPair", mkPairType)
+                      ]
+                  )
+              )
+            , ("MkPair", CtorEntry mkPairType)
+            , ("A", BindingEntry Type)
+            , ("B", BindingEntry Type)
+            , ("x", BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B"))
+            ]
             [ ("Pair", Many)
             , ("MkPair", Many)
             , ("A", Zero)

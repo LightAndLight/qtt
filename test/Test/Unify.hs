@@ -16,7 +16,7 @@ doUnify ::
   Either
     (TypeError String String)
     (Subst (Term String String) String)
-doUnify = unifyTerms id id (const Nothing)
+doUnify = unifyTerms id id mempty
 
 unifySpec :: Spec
 unifySpec =

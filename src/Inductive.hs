@@ -60,7 +60,7 @@ strictlyPositiveIn = go id
 
 checkInductive ::
   Ord a =>
-  (a -> Maybe (Entry a l a)) ->
+  Context a (Entry a l a) ->
   Context a Usage ->
   Inductive a l a ->
   [InductiveError l a]

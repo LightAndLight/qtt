@@ -3,14 +3,15 @@
 module Unify where
 
 import Bound.Class (Bound (..))
+import Bound.Context (Context)
+import qualified Bound.Context as Context
 import Bound.Scope (Scope, fromScope)
 import Bound.Var (Var (..), unvar, _F)
 import Control.Lens.Fold ((^?))
 import Data.Bool (bool)
 import Data.Map (Map)
-import Data.Maybe (fromMaybe)
-
 import qualified Data.Map as Map
+import Data.Maybe (fromMaybe)
 
 import Context
 import Syntax
@@ -38,7 +39,7 @@ unifyScopes ::
   (Ord a, Ord b) =>
   (a -> n) ->
   (a -> n) ->
-  (a -> Maybe (Entry n l x)) ->
+  Context a (Entry n l x) ->
   (b -> n, Scope b (Term n l) a) ->
   (b -> n, Scope b (Term n l) a) ->
   Either (TypeError l n) (Subst (Term n l) a)
@@ -48,7 +49,7 @@ unifyScopes varNames1 varNames2 ctx (n1, tm1) (n2, tm2) =
    in unifyTerms
         varNames1'
         varNames2'
-        (unvar (const Nothing) ctx)
+        (Context.shift ctx) -- (unvar (const Nothing) ctx)
         (fromScope tm1)
         (fromScope tm2)
         >>= fmap Subst
@@ -85,7 +86,7 @@ unifyApps ::
   Ord a =>
   (a -> n) ->
   (a -> n) ->
-  (a -> Maybe (Entry n l x)) ->
+  Context a (Entry n l x) ->
   Term n l a ->
   Term n l a ->
   Either (TypeError l n) (Subst (Term n l) a)
@@ -95,7 +96,7 @@ unifyApps varNames1 varNames2 ctx tm1 tm2 =
       fvar =
         maybe True (\case CtorEntry{} -> False; _ -> True) $
           case f of
-            Var a -> ctx a
+            Var a -> Context.lookup a ctx
             _ -> Nothing
 
       unifyMany s [] [] = Right s
@@ -116,14 +117,14 @@ unifyTerms ::
   Ord a =>
   (a -> n) ->
   (a -> n) ->
-  (a -> Maybe (Entry n l x)) ->
+  Context a (Entry n l x) ->
   Term n l a ->
   Term n l a ->
   Either (TypeError l n) (Subst (Term n l) a)
 unifyTerms varNames1 varNames2 ctx tm1 tm2 =
   case (tm1, tm2) of
     (Var a, Var b) ->
-      case (ctx a, ctx b) of
+      case (Context.lookup a ctx, Context.lookup b ctx) of
         (Just CtorEntry{}, Just CtorEntry{}) ->
           if a == b
             then pure mempty
@@ -182,7 +183,7 @@ unifyInductive ::
   Ord a =>
   (a -> n) ->
   (a -> n) ->
-  (a -> Maybe (Entry n l x)) ->
+  Context a (Entry n l x) ->
   Term n l a ->
   Term n l a ->
   Either (TypeError l n) (Subst (Term n l) a)
@@ -198,8 +199,8 @@ unifyInductive varNames1 varNames2 ctx tm1 tm2 =
         Left $ TypeMismatch (varNames1 <$> tm1) (varNames2 <$> tm2)
    in case (f, f') of
         (Var a, Var a')
-          | Just InductiveEntry{} <- ctx a
-            , Just InductiveEntry{} <- ctx a' ->
+          | Just InductiveEntry{} <- Context.lookup a ctx
+            , Just InductiveEntry{} <- Context.lookup a' ctx ->
             if a /= a'
               then Left $ TypeMismatch (varNames1 <$> tm1) (varNames2 <$> tm2)
               else unifyMany mempty xs xs'
