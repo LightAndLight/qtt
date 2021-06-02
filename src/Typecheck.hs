@@ -21,7 +21,7 @@ import Bound.Scope (fromScope, instantiate1, toScope)
 import Bound.Var (Var (..), unvar)
 import Control.Applicative ((<|>))
 import Control.Comonad (extract)
-import Control.Lens.Getter (view, (^.))
+import Control.Lens.Getter (to, view, (^.))
 import Control.Lens.Setter (mapped, over, (%~), (.~))
 import Control.Lens.TH (makeLenses)
 import Control.Lens.Tuple (_3)
@@ -29,9 +29,11 @@ import Control.Monad (guard)
 import Data.Bool (bool)
 import Data.Foldable (traverse_)
 import Data.Function ((&))
+import Data.Functor.Identity (Identity (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
+import qualified Data.Maybe as Maybe
 import Data.Semiring (times)
 import Data.Set (Set)
 import GHC.Stack (HasCallStack)
@@ -45,11 +47,57 @@ import Syntax
 import TypeError
 import Unify
 
+data BMap k v
+
+instance Semigroup (BMap k v) where
+  (<>) = undefined
+
+shift :: (k -> k') -> BMap k v -> BMap k' v
+shift = undefined
+
+lookup :: BMap k v -> k -> Maybe v
+lookup = undefined
+
+singleton :: k -> v -> BMap k v
+singleton = undefined
+
+insert :: k -> v -> BMap k v -> BMap k v
+insert = undefined
+
+split :: (a -> Either b c) -> BMap a x -> (BMap b x, BMap c x)
+split = undefined
+
+mapWithKey :: (k -> a -> b) -> BMap k a -> BMap k b
+mapWithKey = undefined
+
+fromList :: [(k, v)] -> BMap k v
+fromList = undefined
+
+data MergeKeys a b
+  = Both a b
+  | LeftOnly a
+  | RightOnly b
+
+mergeA ::
+  Applicative m =>
+  (k -> MergeKeys a b -> m (Maybe (k', c))) ->
+  BMap k a ->
+  BMap k b ->
+  m (BMap k' c)
+mergeA = undefined
+
+merge ::
+  (k -> MergeKeys a b -> Maybe (k', c)) ->
+  BMap k a ->
+  BMap k b ->
+  BMap k' c
+merge f a b = runIdentity $ mergeA (\k -> Identity . f k) a b
+
 data Env a l x = Env
   { _envDepth :: a -> x
   , _envNames :: x -> a
   , _envTypes :: x -> Maybe (Entry a l x)
-  , _envUsages :: x -> Maybe Usage
+  , _envUsages :: BMap x Usage
   }
 makeLenses ''Env
 
@@ -115,9 +163,9 @@ eval depth tm =
  where
   evalScope d = toScope . eval (F . d) . fromScope
 
-unsafeGetUsage :: a -> (a -> Maybe b) -> b
+unsafeGetUsage :: a -> BMap a b -> b
 unsafeGetUsage a usages =
-  case usages a of
+  case Typecheck.lookup usages a of
     Nothing -> error "check: bound variable's usage was not found"
     Just u -> u
 
@@ -129,7 +177,7 @@ unsafeCheckConsumed ::
   -- | Variable
   x ->
   -- | Usages
-  (x -> Maybe Usage) ->
+  BMap x Usage ->
   Either (TypeError l a) ()
 unsafeCheckConsumed names u a usages =
   let u' = unsafeGetUsage a usages
@@ -138,22 +186,29 @@ unsafeCheckConsumed names u a usages =
         _ -> pure ()
 
 mergeUsages ::
-  (x -> Maybe Usage) ->
-  (x -> Maybe Usage) ->
-  (x -> Maybe Usage)
-mergeUsages a b x = do
-  uA <- a x
-  uB <- b x
-  case (uA, uB) of
-    (Zero, Zero) -> pure Zero
-    (Zero, One) -> pure Zero
-    (Zero, Many) -> error "mergeUsages: zero as many"
-    (One, Zero) -> pure Zero
-    (One, One) -> pure One
-    (One, Many) -> error "mergeUsages: one as many"
-    (Many, Zero) -> error "mergeUsages: many as zero"
-    (Many, One) -> error "mergeUsages: many as one"
-    (Many, Many) -> pure Many
+  BMap x Usage ->
+  BMap x Usage ->
+  BMap x Usage
+mergeUsages =
+  merge
+    ( \x ->
+        \case
+          Both uA uB ->
+            case (uA, uB) of
+              (Zero, Zero) -> Just (x, Zero)
+              (Zero, One) -> Just (x, Zero)
+              (Zero, Many) -> error "mergeUsages: zero as many"
+              (One, Zero) -> Just (x, Zero)
+              (One, One) -> Just (x, One)
+              (One, Many) -> error "mergeUsages: one as many"
+              (Many, Zero) -> error "mergeUsages: many as zero"
+              (Many, One) -> error "mergeUsages: many as one"
+              (Many, Many) -> Just (x, Many)
+          LeftOnly _ ->
+            Nothing
+          RightOnly _ ->
+            Nothing
+    )
 
 {- | Apply a list of arguments to a function, throwing an error
  if the function cannot be fully applied
@@ -208,7 +263,7 @@ matchSubst inTm t =
 deeperEnv ::
   (b -> a) ->
   (b -> Maybe (Entry a l x)) ->
-  (b -> Maybe Usage) ->
+  BMap b Usage ->
   Env a l x ->
   Env a l (Var b x)
 deeperEnv names types usages env =
@@ -216,7 +271,7 @@ deeperEnv names types usages env =
     { _envDepth = F . _envDepth env
     , _envNames = unvar names (_envNames env)
     , _envTypes = fmap (fmap F) . unvar types (_envTypes env)
-    , _envUsages = unvar usages (_envUsages env)
+    , _envUsages = shift B usages <> shift F (_envUsages env)
     }
 
 checkBranchesMatching ::
@@ -229,7 +284,7 @@ checkBranchesMatching ::
   Ty a l x ->
   Map a (Term a l x) ->
   Maybe (Set a) ->
-  Either (TypeError l a) (x -> Maybe Usage)
+  Either (TypeError l a) (BMap x Usage)
 -- impossible branch for a non-inductive type is not allowed
 checkBranchesMatching _ _ _ (BranchImpossible _ :| _) _ _ _ Nothing =
   Left NotImpossible
@@ -243,7 +298,7 @@ checkBranchesMatching varCost env (inTm, inUsage, inTy) (Branch p v :| bs) u out
           ( deeperEnv
               Bound.name
               (const $ Just (BindingEntry inTy))
-              (const $ Just inUsage)
+              (singleton (Name n V) inUsage)
               env
           )
           (fromScope v)
@@ -255,7 +310,9 @@ checkBranchesMatching varCost env (inTm, inUsage, inTy) (Branch p v :| bs) u out
         (B $ Name n V)
         usages'
       case bs of
-        [] -> pure $ usages' . F
+        [] ->
+          let (_, usages'') = split (unvar Left Right) usages'
+           in pure usages''
         bb : bbs -> checkBranchesMatching varCost env (inTm, inUsage, inTy) (bb :| bbs) u outTy ctors Nothing
     PCtor s _ _ -> Left $ NotConstructorFor s $ env ^. envNames <$> inTy
 -- impossible branch for an inductive type. the match is impossible if the inductive type has no constructors,
@@ -293,7 +350,7 @@ checkBranchesMatching varCost env (inTm, inUsage, inTy) (Branch p v :| bs) u out
           ( deeperEnv
               Bound.name
               (const $ Just (BindingEntry inTy))
-              (const $ Just inUsage)
+              (singleton (Name n V) inUsage)
               env
           )
           (fromScope v)
@@ -301,7 +358,9 @@ checkBranchesMatching varCost env (inTm, inUsage, inTy) (Branch p v :| bs) u out
           (fmap F $ outTy >>= matchSubst inTm (Var $ (env ^. envDepth) n))
       unsafeCheckConsumed (unvar Bound.name $ env ^. envNames) inUsage (B $ Name n V) usages'
       case bs of
-        [] -> pure $ usages' . F
+        [] ->
+          let (_, usages'') = split (unvar Left Right) usages'
+           in pure usages''
         bb : bbs ->
           -- The match is now total
           checkBranchesMatching varCost env (inTm, inUsage, inTy) (bb :| bbs) u outTy allCtors (Just mempty)
@@ -319,7 +378,7 @@ checkBranchesMatching varCost env (inTm, inUsage, inTy) (Branch p v :| bs) u out
           ( deeperEnv
               Bound.name
               (Just . BindingEntry . (argTys !!) . pathVal . extract)
-              (Just . times inUsage . (argUsages !!) . pathVal . extract)
+              (fromList $ zipWith3 (\n ix argUsage -> (Name n (C ix), times inUsage argUsage)) ns [0 ..] argUsages)
               env
           )
           (fromScope v)
@@ -347,7 +406,9 @@ checkBranchesMatching varCost env (inTm, inUsage, inTy) (Branch p v :| bs) u out
       case bs of
         [] ->
           if Set.null remaining'
-            then pure (usages' . F)
+            then
+              let (_, usages'') = split (unvar Left Right) usages'
+               in pure usages''
             else Left $ UnmatchedCases remaining
         bb : bbs ->
           checkBranchesMatching
@@ -368,7 +429,7 @@ checkBranches ::
   NonEmpty (Branch a (Term a l) x) ->
   Usage ->
   Ty a l x ->
-  Either (TypeError l a) (x -> Maybe Usage)
+  Either (TypeError l a) (BMap x Usage)
 checkBranches varCost env (inTm, inUsage, inTy) bs u outTy = do
   mustMatch <-
     case inTyCon of
@@ -403,7 +464,7 @@ check ::
   Term a l x ->
   Usage ->
   Ty a l x ->
-  Either (TypeError l a) (x -> Maybe Usage)
+  Either (TypeError l a) (BMap x Usage)
 check _ _ _ Many _ = error "check called with usage Many"
 check varCost env tm u ty_ =
   let ty = eval (env ^. envDepth) ty_ -- pre-compute
@@ -412,7 +473,7 @@ check varCost env tm u ty_ =
           case ty of
             Type -> pure $ env ^. envUsages
             _ -> Left $ ExpectedType $ env ^. envNames <$> ty
-        Pi _ _ a b ->
+        Pi _ n a b ->
           case ty of
             Type -> do
               _ <- checkType env a Type
@@ -421,7 +482,7 @@ check varCost env tm u ty_ =
                   ( deeperEnv
                       Bound.name
                       (const (Just $ BindingEntry a) . extract)
-                      (const (Just Zero) . extract)
+                      (singleton (Name n ()) Zero)
                       env
                   )
                   (fromScope b)
@@ -437,7 +498,7 @@ check varCost env tm u ty_ =
                   ( deeperEnv
                       Bound.name
                       (const (Just $ BindingEntry s) . extract)
-                      (const (Just $ times u' u))
+                      (singleton (Name n ()) (times u' u))
                       env
                   )
                   (fromScope a)
@@ -448,9 +509,10 @@ check varCost env tm u ty_ =
                 (times u' u)
                 (B $ Name n ())
                 usages'
-              pure $ usages' . F
+              let (_, usages'') = split (unvar Left Right) usages'
+              pure usages''
             _ -> Left $ ExpectedPi $ env ^. envNames <$> ty
-        Tensor _ _ a b ->
+        Tensor n _ a b ->
           case ty of
             Type -> do
               _ <- checkType env a Type
@@ -459,7 +521,7 @@ check varCost env tm u ty_ =
                   ( deeperEnv
                       Bound.name
                       (const (Just $ BindingEntry a) . extract)
-                      (const (Just Zero) . extract)
+                      (singleton (Name n ()) Zero)
                       env
                   )
                   (fromScope b)
@@ -483,7 +545,7 @@ check varCost env tm u ty_ =
                   ( deeperEnv
                       Bound.name
                       (Just . BindingEntry . bool s (instantiate1Name (Fst a) t) . extract)
-                      (bool (Just aUsage) (Just u) . extract)
+                      (fromList [(Name n1 False, aUsage), (Name n2 True, u)])
                       (env & envUsages .~ usages')
                   )
                   (fromScope b)
@@ -492,9 +554,10 @@ check varCost env tm u ty_ =
               let names' = unvar Bound.name $ env ^. envNames
               unsafeCheckConsumed names' aUsage (B $ Name n1 False) usages''
               unsafeCheckConsumed names' u (B $ Name n2 True) usages''
-              pure $ usages'' . F
+              let (_, usages''') = split (unvar Left Right) usages''
+              pure usages'''
             _ -> Left $ ExpectedTensor $ env ^. envNames <$> aTy
-        With _ a b ->
+        With n a b ->
           case ty of
             Type -> do
               _ <- checkType env a Type
@@ -503,7 +566,7 @@ check varCost env tm u ty_ =
                   ( deeperEnv
                       Bound.name
                       (const (Just $ BindingEntry a))
-                      (const (Just Zero))
+                      (singleton (Name n ()) Zero)
                       env
                   )
                   (fromScope b)
@@ -539,16 +602,16 @@ checkType ::
   Env a l x ->
   Term a l x ->
   Ty a l x ->
-  Either (TypeError l a) (x -> Maybe Usage)
+  Either (TypeError l a) (BMap x Usage)
 checkType env tm =
-  check Zero (env & envUsages %~ ((Zero <$) .)) tm Zero
+  check Zero (env & envUsages . mapped .~ Zero) tm Zero
 
 checkTerm ::
   (Ord x, Ord a) =>
   Env a l x ->
   Term a l x ->
   Ty a l x ->
-  Either (TypeError l a) (x -> Maybe Usage)
+  Either (TypeError l a) (BMap x Usage)
 checkTerm env tm = check One env tm One
 
 infer ::
@@ -558,7 +621,7 @@ infer ::
   Env a l x ->
   Term a l x ->
   Usage ->
-  Either (TypeError l a) (x -> Maybe Usage, Usage, Ty a l x)
+  Either (TypeError l a) (BMap x Usage, Usage, Ty a l x)
 infer _ _ _ Many = error "infer called with usage Many"
 infer varCost env tm u =
   over (mapped . _3) (eval $ env ^. envDepth) $ -- post compute
@@ -573,12 +636,12 @@ infer varCost env tm u =
           maybe
             (Left . NotInScope $ view envNames env a)
             pure
-            (view envUsages env a)
+            (view (envUsages . to Typecheck.lookup) env a)
         case (varCost, u') of
           (Zero, _) -> pure (env ^. envUsages, u', aTy)
           (One, Zero) -> Left $ UsingErased $ view envNames env a
           (One, One) ->
-            pure (\x -> Zero <$ guard (x == a) <|> view envUsages env x, u', aTy)
+            pure (insert a Zero (view envUsages env), u', aTy)
           (One, Many) -> pure (env ^. envUsages, u', aTy)
           (Many, Zero) -> Left $ UsingErased $ view envNames env a
           (Many, One) -> Left $ OverusedLinear $ view envNames env a
@@ -612,13 +675,13 @@ inferType ::
   (Ord x, Ord a) =>
   Env a l x ->
   Term a l x ->
-  Either (TypeError l a) (x -> Maybe Usage, Usage, Ty a l x)
-inferType env tm = infer Zero (env & envUsages %~ ((Zero <$) .)) tm Zero
+  Either (TypeError l a) (BMap x Usage, Usage, Ty a l x)
+inferType env tm = infer Zero (env & envUsages . mapped .~ Zero) tm Zero
 
 inferTerm ::
   HasCallStack =>
   (Ord x, Ord a) =>
   Env a l x ->
   Term a l x ->
-  Either (TypeError l a) (x -> Maybe Usage, Usage, Ty a l x)
+  Either (TypeError l a) (BMap x Usage, Usage, Ty a l x)
 inferTerm env tm = infer One env tm One
