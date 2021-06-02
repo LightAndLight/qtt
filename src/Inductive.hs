@@ -3,12 +3,12 @@
 
 module Inductive where
 
+import Bound.Context (Context)
 import Bound.Scope (fromScope)
 import Bound.Var (Var (..))
 import Control.Monad (unless)
 import Control.Monad.Writer.Strict (runWriter, tell)
 import Data.Map (Map)
-
 import qualified Data.Map as Map
 
 import Context
@@ -61,7 +61,7 @@ strictlyPositiveIn = go id
 checkInductive ::
   Ord a =>
   (a -> Maybe (Entry a l a)) ->
-  (a -> Maybe Usage) ->
+  Context a Usage ->
   Inductive a l a ->
   [InductiveError l a]
 checkInductive ctx usages ind = snd $ runWriter go
