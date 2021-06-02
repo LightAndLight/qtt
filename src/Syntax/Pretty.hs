@@ -8,10 +8,10 @@ import Bound.Scope (fromScope)
 import Bound.Var (unvar)
 import Control.Lens.Cons (_Snoc)
 import Control.Lens.Fold ((^?))
+import Data.Bool (bool)
 import Data.List.NonEmpty (NonEmpty (..))
 import Text.PrettyPrint.ANSI.Leijen (Doc, Pretty (..))
 
-import qualified Bound.Name as Bound
 import qualified Text.PrettyPrint.ANSI.Leijen as Pretty
 
 import Syntax
@@ -37,7 +37,7 @@ prettyBranch pvar (Branch a b) =
     [ prettyPattern a
     , Pretty.text "=>"
     , hangCase
-        (prettyTerm (unvar (pretty . Bound.name) pvar))
+        (prettyTerm (unvar (pretty . pathArgName a) pvar))
         (fromScope b)
     ]
 
@@ -64,18 +64,18 @@ prettyTerm pvar tm =
       Pretty.hsep
         [ Pretty.char '\\' <> pretty n
         , Pretty.text "=>"
-        , prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope s)
+        , prettyTerm (unvar (const $ pretty n) pvar) (fromScope s)
         ]
-    Pi a mn b c ->
+    Pi a n b c ->
       Pretty.hsep
         [ Pretty.parens $
             Pretty.hsep
-              [ maybe (Pretty.char '_') pretty mn
+              [ pretty n
               , Pretty.char ':' <> pretty a
               , prettyTerm pvar b
               ]
         , Pretty.text "->"
-        , prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope c)
+        , prettyTerm (unvar (const $ pretty n) pvar) (fromScope c)
         ]
     App a b ->
       Pretty.hsep
@@ -110,7 +110,7 @@ prettyTerm pvar tm =
         Pretty.hsep [pretty n, Pretty.char ':' <> pretty u, prettyTerm pvar a]
           <> Pretty.char '⨂'
           <> Pretty.space
-          <> prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope b)
+          <> prettyTerm (unvar (const $ pretty n) pvar) (fromScope b)
     UnpackTensor n1 n2 a b ->
       Pretty.hsep
         [ Pretty.text "let"
@@ -123,7 +123,7 @@ prettyTerm pvar tm =
           )
             (prettyTerm pvar a)
         , Pretty.text "in"
-        , prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope b)
+        , prettyTerm (unvar (pretty . bool n1 n2) pvar) (fromScope b)
         ]
     MkWith a b ->
       Pretty.parens $
@@ -136,7 +136,7 @@ prettyTerm pvar tm =
         Pretty.hsep [pretty n, Pretty.char ':', prettyTerm pvar a]
           <> Pretty.char '&'
           <> Pretty.space
-          <> prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope b)
+          <> prettyTerm (unvar (const $ pretty n) pvar) (fromScope b)
     Fst a ->
       Pretty.hsep
         [ Pretty.text "fst"

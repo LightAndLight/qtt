@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeOperators #-}
@@ -10,8 +11,7 @@
 module Syntax where
 
 import Bound.Class (Bound (..))
-import Bound.Name (Name (..), abstract1Name, abstractName)
-import Bound.Scope (Scope)
+import Bound.Scope (Scope, abstract, abstract1)
 import Control.Monad (ap)
 import Control.Monad.Trans.Class (lift)
 import Data.Deriving (deriveShow1)
@@ -21,6 +21,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (isJust)
 import Data.Semiring (Semiring (..))
 import Data.Type.Equality ((:~:) (..))
+import GHC.Exts (IsString)
 import Text.PrettyPrint.ANSI.Leijen (Pretty (..))
 
 import qualified Text.PrettyPrint.ANSI.Leijen as Pretty
@@ -71,8 +72,12 @@ pathVal :: Path p -> p
 pathVal V = ()
 pathVal (C n) = n
 
+pathArgName :: Pattern c p -> Path p -> c
+pathArgName (PVar c) V = c
+pathArgName (PCtor _ cs _) (C ix) = cs !! ix
+
 data Branch n f a
-  = forall p. Branch (Pattern n p) (Scope (Name n (Path p)) f a)
+  = forall p. Branch (Pattern n p) (Scope (Path p) f a)
   | forall p. BranchImpossible (Pattern n p)
 deriving instance Functor f => Functor (Branch n f)
 deriving instance Foldable f => Foldable (Branch n f)
@@ -114,14 +119,14 @@ data Term n l a
   = Var a
   | Ann (Term n l a) Usage (Term n l a)
   | Type
-  | Lam n (Scope (Name n ()) (Term n l) a)
-  | Pi Usage (Maybe n) (Term n l a) (Scope (Name n ()) (Term n l) a)
+  | Lam n (Scope () (Term n l) a)
+  | Pi Usage n (Term n l a) (Scope () (Term n l) a)
   | App (Term n l a) (Term n l a)
   | MkTensor (Term n l a) (Term n l a)
-  | Tensor n Usage (Term n l a) (Scope (Name n ()) (Term n l) a)
-  | UnpackTensor n n (Term n l a) (Scope (Name n Bool) (Term n l) a)
+  | Tensor n Usage (Term n l a) (Scope () (Term n l) a)
+  | UnpackTensor n n (Term n l a) (Scope Bool (Term n l) a)
   | MkWith (Term n l a) (Term n l a)
-  | With n (Term n l a) (Scope (Name n ()) (Term n l) a)
+  | With n (Term n l a) (Scope () (Term n l) a)
   | Fst (Term n l a)
   | Snd (Term n l a)
   | Unit
@@ -191,33 +196,33 @@ unfoldApps = go []
   go as a = (a, as)
 
 lam :: Eq a => a -> Term a l a -> Term a l a
-lam a = Lam a . abstract1Name a
+lam a = Lam a . abstract1 a
 
 pi :: Eq a => (a, Ty a l a) -> Term a l a -> Term a l a
-pi (a, ty) = Pi Many (Just a) ty . abstract1Name a
+pi (a, ty) = Pi Many a ty . abstract1 a
 
 lpi :: Eq a => (a, Ty a l a) -> Term a l a -> Term a l a
-lpi (a, ty) = Pi One (Just a) ty . abstract1Name a
+lpi (a, ty) = Pi One a ty . abstract1 a
 
 forall_ :: Eq a => (a, Ty a l a) -> Term a l a -> Term a l a
-forall_ (a, ty) = Pi Zero (Just a) ty . abstract1Name a
+forall_ (a, ty) = Pi Zero a ty . abstract1 a
 
-arr :: Term n l a -> Term n l a -> Term n l a
-arr a b = Pi Many Nothing a $ lift b
+arr :: IsString n => Term n l a -> Term n l a -> Term n l a
+arr a b = Pi Many "_" a $ lift b
 
-limp :: Term n l a -> Term n l a -> Term n l a
-limp a b = Pi One Nothing a $ lift b
+limp :: IsString n => Term n l a -> Term n l a -> Term n l a
+limp a b = Pi One "_" a $ lift b
 
 tensor :: Eq a => (a, Usage, Ty a l a) -> Ty a l a -> Ty a l a
-tensor (a, u, ty) = Tensor a u ty . abstract1Name a
+tensor (a, u, ty) = Tensor a u ty . abstract1 a
 
 with :: Eq a => (a, Ty a l a) -> Ty a l a -> Ty a l a
-with (a, ty) = With a ty . abstract1Name a
+with (a, ty) = With a ty . abstract1 a
 
 unpackTensor :: Eq a => (a, a) -> Term a l a -> Term a l a -> Term a l a
 unpackTensor (x, y) m n =
   UnpackTensor x y m $
-    abstractName
+    abstract
       ( \z ->
           if z == x
             then Just False
@@ -226,10 +231,10 @@ unpackTensor (x, y) m n =
       n
 
 varb :: (Eq a, Monad f) => a -> f a -> Branch a f a
-varb a = Branch (PVar a) . abstractName (\x -> if x == a then Just V else Nothing)
+varb a = Branch (PVar a) . abstract (\x -> if x == a then Just V else Nothing)
 
 ctorb :: (Eq a, Monad f) => a -> [a] -> f a -> Branch a f a
-ctorb a b = Branch (PCtor a b bl) . abstractName (fmap C . (`elemIndex` b))
+ctorb a b = Branch (PCtor a b bl) . abstract (fmap C . (`elemIndex` b))
  where
   bl = length b
 

@@ -6,6 +6,8 @@ module Test.Typecheck where
 
 import Prelude hiding (pi)
 
+import Bound.Context (Context)
+import qualified Bound.Context as Context
 import qualified Data.Map as Map
 import Test.Hspec
 
@@ -18,19 +20,19 @@ import Test.Utils
 
 doCheckType ::
   (String -> Maybe (Entry String String String)) ->
-  (String -> Maybe Usage) ->
+  [(String, Usage)] ->
   Term String String String ->
   Ty String String String ->
-  Either (TypeError String String) (String -> Maybe Usage)
-doCheckType a b = checkType (Env id id a b)
+  Either (TypeError String String) (Context String Usage)
+doCheckType a b = checkType (Env id id a $ Context.fromList b)
 
 doCheckTerm ::
   (String -> Maybe (Entry String String String)) ->
-  (String -> Maybe Usage) ->
+  [(String, Usage)] ->
   Term String String String ->
   Ty String String String ->
-  Either (TypeError String String) (String -> Maybe Usage)
-doCheckTerm a b = checkTerm (Env id id a b)
+  Either (TypeError String String) (Context String Usage)
+doCheckTerm a b = checkTerm (Env id id a $ Context.fromList b)
 
 typecheckSpec :: Spec
 typecheckSpec =
@@ -39,28 +41,28 @@ typecheckSpec =
       assertRight $
         doCheckType
           (const Nothing)
-          (const Nothing)
+          []
           (lam "A" $ lam "x" $ pure "x")
           (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
     it "2) (\\A => \\x => x) :1 (A :0 Type) -> (x :1 A) -> A" $
       assertRight $
         doCheckTerm
           (const Nothing)
-          (const Nothing)
+          []
           (lam "A" $ lam "x" $ pure "x")
           (forall_ ("A", Type) $ lpi ("x", pure "A") $ pure "A")
     it "4) (\\A => \\x => x) :0 (A :0 Type) -> (x :0 A) -> A" $
       assertRight $
         doCheckType
           (const Nothing)
-          (const Nothing)
+          []
           (lam "A" $ lam "x" $ pure "x")
           (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
     it "5) (\\A => \\x => x) :1 (A :0 Type) -> (x :0 A) -> A   invalid" $
       assertLeft (UsingErased "x") $
         doCheckTerm
           (const Nothing)
-          (const Nothing)
+          []
           (lam "A" $ lam "x" $ pure "x")
           (forall_ ("A", Type) $ forall_ ("x", pure "A") $ pure "A")
     it "7) (\\A => \\x => \\y => y) :1 (A :0 Type) -> (x :1 A) -> (y :w A) -> A   invalid" $
@@ -68,7 +70,7 @@ typecheckSpec =
         (UnusedLinear "x")
         ( doCheckTerm
             (const Nothing)
-            (const Nothing)
+            []
             (lam "A" $ lam "x" $ lam "y" $ pure "y")
             ( forall_ ("A", Type) $
                 lpi ("x", pure "A") $
@@ -81,7 +83,7 @@ typecheckSpec =
         (UnusedLinear "A")
         ( doCheckTerm
             (const Nothing)
-            (const Nothing)
+            []
             (lam "A" $ lam "x" $ pure "x")
             ( lpi ("A", Type) $
                 lpi ("x", pure "A") $
@@ -93,7 +95,7 @@ typecheckSpec =
         (OverusedLinear "x")
         ( doCheckTerm
             (const Nothing)
-            (const Nothing)
+            []
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             ( forall_ ("A", Type) $
                 lpi ("x", pure "A") $
@@ -104,7 +106,7 @@ typecheckSpec =
       assertRight
         ( doCheckTerm
             (const Nothing)
-            (const Nothing)
+            []
             (lam "A" $ lam "x" $ MkTensor (pure "x") (pure "x"))
             ( forall_ ("A", Type) $
                 pi ("x", pure "A") $
@@ -124,11 +126,9 @@ typecheckSpec =
                 "B" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                "B" -> Just Zero
-                _ -> Nothing
-            )
+            [ ("A", Zero)
+            , ("B", Zero)
+            ]
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (App (pure "a") (pure "b")))
             ( pi ("_", tensor ("_", Many, pure "A" `arr` pure "B") (pure "A")) $
                 pure "B"
@@ -144,11 +144,9 @@ typecheckSpec =
                 "B" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                "B" -> Just Zero
-                _ -> Nothing
-            )
+            [ ("A", Zero)
+            , ("B", Zero)
+            ]
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (App (pure "a") (pure "b")))
             ( pi ("_", tensor ("_", Many, pure "A" `limp` pure "B") (pure "A")) $
                 pure "B"
@@ -162,10 +160,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "a"))
             ( limp (tensor ("_", Many, pure "A") (pure "A")) $
                 pure "A"
@@ -178,10 +173,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "b"))
             ( arr (tensor ("_", Zero, pure "A") (pure "A")) $
                 pure "A"
@@ -195,10 +187,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "b"))
             ( arr (tensor ("_", One, pure "A") (pure "A")) $
                 pure "A"
@@ -211,10 +200,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "b"))
             ( arr (tensor ("_", Many, pure "A") (pure "A")) $
                 pure "A"
@@ -228,10 +214,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             (lam "x" $ unpackTensor ("a", "b") (pure "x") (pure "a"))
             ( arr (tensor ("_", Many, pure "A") (pure "A")) $
                 pure "A"
@@ -244,10 +227,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             (lam "x" $ Fst $ pure "x")
             ( limp (with ("_", pure "A") (pure "A")) $
                 pure "A"
@@ -260,10 +240,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             (lam "x" $ Snd $ pure "x")
             ( limp (with ("_", pure "A") (pure "A")) $
                 pure "A"
@@ -277,11 +254,9 @@ typecheckSpec =
                 "B" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                "B" -> Just Zero
-                _ -> Nothing
-            )
+            [ ("A", Zero)
+            , ("B", Zero)
+            ]
             (lam "x" $ MkWith (Fst $ pure "x") (Snd $ pure "x"))
             ( limp (with ("_", pure "A") (pure "B")) $
                 with ("_", pure "A") (pure "B")
@@ -294,10 +269,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             (lam "x" $ MkWith (pure "x") (pure "x"))
             ( limp (pure "A") $
                 with ("_", pure "A") (pure "A")
@@ -310,10 +282,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             ( lam "x" $
                 unpackTensor ("a", "b") (pure "x") $
                   MkWith (pure "a") (pure "b")
@@ -329,10 +298,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             ( lam "x" $
                 MkTensor (Fst $ pure "x") (Snd $ pure "x")
             )
@@ -347,10 +313,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             ( lam "x" $
                 unpackTensor ("a", "b") (pure "x") $
                   MkWith (pure "a") (pure "b")
@@ -367,10 +330,7 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [("A", Zero)]
             ( lam "x" $
                 MkTensor (Fst $ pure "x") (Snd $ pure "x")
             )
@@ -387,16 +347,14 @@ typecheckSpec =
                 "B" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                "B" -> Just Zero
-                _ -> Nothing
-            )
+            [ ("A", Zero)
+            , ("B", Zero)
+            ]
             ( lam "x" $
                 lam "f" $
                   App (pure "f") (pure "x")
             )
-            ( forall_ ("a", pure "A") $
+            ( forall_ ("x", pure "A") $
                 arr (arr (pure "A") (pure "B")) $
                   pure "B"
             )
@@ -409,11 +367,9 @@ typecheckSpec =
                 "B" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                "B" -> Just Zero
-                _ -> Nothing
-            )
+            [ ("A", Zero)
+            , ("B", Zero)
+            ]
             ( lam "x" $
                 lam "f" $
                   App (pure "f") (pure "x")
@@ -450,13 +406,11 @@ typecheckSpec =
                 "A" -> Just $ BindingEntry Type
                 _ -> Nothing
             )
-            ( \case
-                "List" -> Just Many
-                "Nil" -> Just Many
-                "Cons" -> Just Many
-                "A" -> Just Zero
-                _ -> Nothing
-            )
+            [ ("List", Many)
+            , ("Nil", Many)
+            , ("Cons", Many)
+            , ("A", Zero)
+            ]
             (App (pure "Nil") (pure "A"))
             (App (pure "List") (pure "A"))
         )
@@ -481,13 +435,11 @@ typecheckSpec =
                 "x" -> Just $ BindingEntry $ pure "Bool"
                 _ -> Nothing
             )
-            ( \case
-                "Bool" -> Just Many
-                "False" -> Just Many
-                "True" -> Just Many
-                "x" -> Just Many
-                _ -> Nothing
-            )
+            [ ("Bool", Many)
+            , ("False", Many)
+            , ("True", Many)
+            , ("x", Many)
+            ]
             ( Case
                 (pure "x")
                 [ ctorb "True" [] $ pure "False"
@@ -505,12 +457,10 @@ typecheckSpec =
                 "x" -> Just $ BindingEntry $ with ("_", pure "A") (pure "B")
                 _ -> Nothing
             )
-            ( \case
-                "A" -> Just Zero
-                "B" -> Just Zero
-                "x" -> Just Many
-                _ -> Nothing
-            )
+            [ ("A", Zero)
+            , ("B", Zero)
+            , ("x", Many)
+            ]
             ( Case
                 (pure "x")
                 [ varb "y" $ pure "y"
@@ -553,17 +503,15 @@ typecheckSpec =
                 "x" -> Just $ BindingEntry $ App (pure "BoolS") (pure "b")
                 _ -> Nothing
             )
-            ( \case
-                "Bool" -> Just Many
-                "False" -> Just Many
-                "True" -> Just Many
-                "BoolS" -> Just Many
-                "FalseS" -> Just Many
-                "TrueS" -> Just Many
-                "b" -> Just Zero
-                "x" -> Just Many
-                _ -> Nothing
-            )
+            [ ("Bool", Many)
+            , ("False", Many)
+            , ("True", Many)
+            , ("BoolS", Many)
+            , ("FalseS", Many)
+            , ("TrueS", Many)
+            , ("b", Zero)
+            , ("x", Many)
+            ]
             ( Case
                 (pure "x")
                 [ ctorb "TrueS" [] $ pure "TrueS"
@@ -611,17 +559,15 @@ typecheckSpec =
                 "x" -> Just $ BindingEntry $ App (pure "BoolS") (pure "b")
                 _ -> Nothing
             )
-            ( \case
-                "Bool" -> Just Many
-                "False" -> Just Many
-                "True" -> Just Many
-                "BoolS" -> Just Many
-                "FalseS" -> Just Many
-                "TrueS" -> Just Many
-                "b" -> Just Zero
-                "x" -> Just Many
-                _ -> Nothing
-            )
+            [ ("Bool", Many)
+            , ("False", Many)
+            , ("True", Many)
+            , ("BoolS", Many)
+            , ("FalseS", Many)
+            , ("TrueS", Many)
+            , ("b", Zero)
+            , ("x", Many)
+            ]
             ( Case
                 (pure "x")
                 [ ctorb "TrueS" [] $ pure "TrueS"
@@ -664,16 +610,14 @@ typecheckSpec =
                 "x" -> Just $ BindingEntry $ App (pure "BoolS") (pure "True")
                 _ -> Nothing
             )
-            ( \case
-                "Bool" -> Just Many
-                "False" -> Just Many
-                "True" -> Just Many
-                "BoolS" -> Just Many
-                "FalseS" -> Just Many
-                "TrueS" -> Just Many
-                "x" -> Just Many
-                _ -> Nothing
-            )
+            [ ("Bool", Many)
+            , ("False", Many)
+            , ("True", Many)
+            , ("BoolS", Many)
+            , ("FalseS", Many)
+            , ("TrueS", Many)
+            , ("x", Many)
+            ]
             ( Case
                 (pure "x")
                 [ ctorb "TrueS" [] $ pure "TrueS"
@@ -707,14 +651,12 @@ typecheckSpec =
                 "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
                 _ -> Nothing
             )
-            ( \case
-                "Pair" -> Just Many
-                "MkPair" -> Just Many
-                "A" -> Just Zero
-                "B" -> Just Zero
-                "x" -> Just One
-                _ -> Nothing
-            )
+            [ ("Pair", Many)
+            , ("MkPair", Many)
+            , ("A", Zero)
+            , ("B", Zero)
+            , ("x", One)
+            ]
             ( Case
                 (pure "x")
                 [ ctorb "MkPair" ["A", "B", "x", "y"] $ pure "x"
@@ -748,14 +690,12 @@ typecheckSpec =
                 "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
                 _ -> Nothing
             )
-            ( \case
-                "Pair" -> Just Many
-                "MkPair" -> Just Many
-                "A" -> Just Zero
-                "B" -> Just Zero
-                "x" -> Just One
-                _ -> Nothing
-            )
+            [ ("Pair", Many)
+            , ("MkPair", Many)
+            , ("A", Zero)
+            , ("B", Zero)
+            , ("x", One)
+            ]
             ( Case
                 (pure "x")
                 [ ctorb "MkPair" ["A", "B", "x", "y"] $ pure "x"
@@ -790,15 +730,13 @@ typecheckSpec =
                 "b" -> Just $ BindingEntry $ pure "B"
                 _ -> Nothing
             )
-            ( \case
-                "Pair" -> Just Many
-                "MkPair" -> Just Many
-                "A" -> Just Zero
-                "B" -> Just Zero
-                "a" -> Just One
-                "b" -> Just One
-                _ -> Nothing
-            )
+            [ ("Pair", Many)
+            , ("MkPair", Many)
+            , ("A", Zero)
+            , ("B", Zero)
+            , ("a", One)
+            , ("b", One)
+            ]
             (App (App (App (App (pure "MkPair") (pure "A")) (pure "B")) (pure "a")) (pure "b"))
             (App (App (pure "Pair") (pure "A")) (pure "B"))
         )
@@ -828,14 +766,12 @@ typecheckSpec =
                 "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
                 _ -> Nothing
             )
-            ( \case
-                "Pair" -> Just Many
-                "MkPair" -> Just Many
-                "A" -> Just Zero
-                "B" -> Just Zero
-                "x" -> Just One
-                _ -> Nothing
-            )
+            [ ("Pair", Many)
+            , ("MkPair", Many)
+            , ("A", Zero)
+            , ("B", Zero)
+            , ("x", One)
+            ]
             ( Case
                 (pure "x")
                 [ ctorb "MkPair" ["A", "B", "x", "y"] $ pure "A"
@@ -868,14 +804,12 @@ typecheckSpec =
                 "x" -> Just $ BindingEntry $ App (App (pure "Pair") (pure "A")) (pure "B")
                 _ -> Nothing
             )
-            ( \case
-                "Pair" -> Just Many
-                "MkPair" -> Just Many
-                "A" -> Just Zero
-                "B" -> Just Zero
-                "x" -> Just Many
-                _ -> Nothing
-            )
+            [ ("Pair", Many)
+            , ("MkPair", Many)
+            , ("A", Zero)
+            , ("B", Zero)
+            , ("x", Many)
+            ]
             ( Case
                 (pure "x")
                 [ ctorb "MkPair" ["A", "B", "x", "y"] $ pure "x"
