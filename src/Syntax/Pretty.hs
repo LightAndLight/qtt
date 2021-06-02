@@ -1,16 +1,17 @@
-{-# language EmptyCase #-}
-{-# language GADTs #-}
-{-# language LambdaCase #-}
+{-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
+
 module Syntax.Pretty where
 
 import Bound.Scope (fromScope)
 import Bound.Var (unvar)
 import Control.Lens.Cons (_Snoc)
 import Control.Lens.Fold ((^?))
-import Data.List.NonEmpty (NonEmpty(..))
-import Text.PrettyPrint.ANSI.Leijen (Pretty(..), Doc)
+import Data.Bool (bool)
+import Data.List.NonEmpty (NonEmpty (..))
+import Text.PrettyPrint.ANSI.Leijen (Doc, Pretty (..))
 
-import qualified Bound.Name as Bound
 import qualified Text.PrettyPrint.ANSI.Leijen as Pretty
 
 import Syntax
@@ -27,18 +28,18 @@ prettyPattern p =
 
 prettyBranch :: Pretty n => (a -> Doc) -> Branch n (Term n l) a -> Doc
 prettyBranch _ (BranchImpossible a) =
-  Pretty.hsep $
-  [ prettyPattern a
-  , Pretty.text "impossible"
-  ]
+  Pretty.hsep
+    [ prettyPattern a
+    , Pretty.text "impossible"
+    ]
 prettyBranch pvar (Branch a b) =
-  Pretty.hsep $
-  [ prettyPattern a
-  , Pretty.text "=>"
-  , hangCase
-      (prettyTerm (unvar (pretty . Bound.name) pvar))
-      (fromScope b)
-  ]
+  Pretty.hsep
+    [ prettyPattern a
+    , Pretty.text "=>"
+    , hangCase
+        (prettyTerm (unvar (pretty . pathArgName a) pvar))
+        (fromScope b)
+    ]
 
 prettyTerm :: Pretty n => (a -> Doc) -> Term n l a -> Doc
 prettyTerm pvar tm =
@@ -47,134 +48,151 @@ prettyTerm pvar tm =
     Var a -> pvar a
     Ann a b c ->
       Pretty.hsep
-      [ (case a of
-            Lam{} -> Pretty.parens
-            Pi{} -> Pretty.parens
-            UnpackTensor{} -> Pretty.parens
-            Case{} -> Pretty.parens
-            _ -> id)
-        (prettyTerm pvar a)
-      , Pretty.char ':' <> pretty b
-      , prettyTerm pvar c
-      ]
+        [ ( case a of
+              Lam{} -> Pretty.parens
+              Pi{} -> Pretty.parens
+              UnpackTensor{} -> Pretty.parens
+              Case{} -> Pretty.parens
+              _ -> id
+          )
+            (prettyTerm pvar a)
+        , Pretty.char ':' <> pretty b
+        , prettyTerm pvar c
+        ]
     Type -> Pretty.text "Type"
     Lam n s ->
       Pretty.hsep
-      [ Pretty.char '\\' <> pretty n
-      , Pretty.text "=>"
-      , prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope s)
-      ]
-    Pi a mn b c ->
-      Pretty.hsep
-      [ Pretty.parens $
-        Pretty.hsep
-        [ maybe (Pretty.char '_') pretty mn
-        , Pretty.char ':' <> pretty a
-        , prettyTerm pvar b
+        [ Pretty.char '\\' <> pretty n
+        , Pretty.text "=>"
+        , prettyTerm (unvar (const $ pretty n) pvar) (fromScope s)
         ]
-      , Pretty.text "->"
-      , prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope c)
-      ]
+    Pi a n b c ->
+      Pretty.hsep
+        [ Pretty.parens $
+            Pretty.hsep
+              [ pretty n
+              , Pretty.char ':' <> pretty a
+              , prettyTerm pvar b
+              ]
+        , Pretty.text "->"
+        , prettyTerm (unvar (const $ pretty n) pvar) (fromScope c)
+        ]
     App a b ->
       Pretty.hsep
-      [ (case a of
-            Lam{} -> Pretty.parens
-            Pi{} -> Pretty.parens
-            UnpackTensor{} -> Pretty.parens
-            Case{} -> Pretty.parens
-            _ -> id)
-        (prettyTerm pvar a)
-      , (case b of
-            Lam{} -> Pretty.parens
-            Pi{} -> Pretty.parens
-            UnpackTensor{} -> Pretty.parens
-            App{} -> Pretty.parens
-            Fst{} -> Pretty.parens
-            Snd{} -> Pretty.parens
-            Case{} -> Pretty.parens
-            _ -> id)
-        (prettyTerm pvar b)
-      ]
+        [ ( case a of
+              Lam{} -> Pretty.parens
+              Pi{} -> Pretty.parens
+              UnpackTensor{} -> Pretty.parens
+              Case{} -> Pretty.parens
+              _ -> id
+          )
+            (prettyTerm pvar a)
+        , ( case b of
+              Lam{} -> Pretty.parens
+              Pi{} -> Pretty.parens
+              UnpackTensor{} -> Pretty.parens
+              App{} -> Pretty.parens
+              Fst{} -> Pretty.parens
+              Snd{} -> Pretty.parens
+              Case{} -> Pretty.parens
+              _ -> id
+          )
+            (prettyTerm pvar b)
+        ]
     MkTensor a b ->
       Pretty.parens $
-      prettyTerm pvar a <>
-      Pretty.comma <> Pretty.space <>
-      prettyTerm pvar b
-    Tensor n a b ->
+        prettyTerm pvar a
+          <> Pretty.comma
+          <> Pretty.space
+          <> prettyTerm pvar b
+    Tensor n u a b ->
       Pretty.parens $
-      Pretty.hsep [pretty n, Pretty.char ':', prettyTerm pvar a] <>
-      Pretty.char '⨂' <> Pretty.space <>
-      prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope b)
+        Pretty.hsep [pretty n, Pretty.char ':' <> pretty u, prettyTerm pvar a]
+          <> Pretty.char '⨂'
+          <> Pretty.space
+          <> prettyTerm (unvar (const $ pretty n) pvar) (fromScope b)
     UnpackTensor n1 n2 a b ->
       Pretty.hsep
-      [ Pretty.text "let"
-      , Pretty.parens $
-        pretty n1 <> Pretty.comma <> Pretty.space <> pretty n2
-      , Pretty.char '='
-      , (case a of
-            UnpackTensor{} -> Pretty.parens
-            _ -> id)
-        (prettyTerm pvar a)
-      , Pretty.text "in"
-      , prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope b)
-      ]
+        [ Pretty.text "let"
+        , Pretty.parens $
+            pretty n1 <> Pretty.comma <> Pretty.space <> pretty n2
+        , Pretty.char '='
+        , ( case a of
+              UnpackTensor{} -> Pretty.parens
+              _ -> id
+          )
+            (prettyTerm pvar a)
+        , Pretty.text "in"
+        , prettyTerm (unvar (pretty . bool n1 n2) pvar) (fromScope b)
+        ]
     MkWith a b ->
       Pretty.parens $
-      prettyTerm pvar a <>
-      Pretty.comma <> Pretty.space <>
-      prettyTerm pvar b
-    With n a b ->
+        prettyTerm pvar a
+          <> Pretty.comma
+          <> Pretty.space
+          <> prettyTerm pvar b
+    With a b ->
       Pretty.parens $
-      Pretty.hsep [pretty n, Pretty.char ':', prettyTerm pvar a] <>
-      Pretty.char '&' <> Pretty.space <>
-      prettyTerm (unvar (pretty . Bound.name) pvar) (fromScope b)
+        prettyTerm pvar a
+          <> Pretty.space
+          <> Pretty.char '&'
+          <> Pretty.space
+          <> prettyTerm pvar b
     Fst a ->
       Pretty.hsep
-      [ Pretty.text "fst"
-      , (case a of
-            App{} -> Pretty.parens
-            Pi{} -> Pretty.parens
-            Lam{} -> Pretty.parens
-            Case{} -> Pretty.parens
-            Fst{} -> Pretty.parens
-            Snd{} -> Pretty.parens
-            _ -> id)
-        (prettyTerm pvar a)
-      ]
+        [ Pretty.text "fst"
+        , ( case a of
+              App{} -> Pretty.parens
+              Pi{} -> Pretty.parens
+              Lam{} -> Pretty.parens
+              Case{} -> Pretty.parens
+              Fst{} -> Pretty.parens
+              Snd{} -> Pretty.parens
+              _ -> id
+          )
+            (prettyTerm pvar a)
+        ]
     Snd a ->
       Pretty.hsep
-      [ Pretty.text "snd"
-      , (case a of
-            App{} -> Pretty.parens
-            Pi{} -> Pretty.parens
-            Lam{} -> Pretty.parens
-            Case{} -> Pretty.parens
-            Fst{} -> Pretty.parens
-            Snd{} -> Pretty.parens
-            _ -> id)
-        (prettyTerm pvar a)
-      ]
+        [ Pretty.text "snd"
+        , ( case a of
+              App{} -> Pretty.parens
+              Pi{} -> Pretty.parens
+              Lam{} -> Pretty.parens
+              Case{} -> Pretty.parens
+              Fst{} -> Pretty.parens
+              Snd{} -> Pretty.parens
+              _ -> id
+          )
+            (prettyTerm pvar a)
+        ]
     Unit -> Pretty.text "Unit"
     MkUnit -> Pretty.text "unit"
     Case a (bh :| brest) ->
       Pretty.hsep
-      [ Pretty.text "case"
-      , (case a of
-           Case{} -> Pretty.parens
-           Lam{} -> Pretty.parens
-           Pi{} -> Pretty.parens
-           _ -> id)
-        (prettyTerm pvar a)
-      , Pretty.text "of"
-      ] Pretty.<$>
-      Pretty.indent 2
-      (Pretty.char '{' <> Pretty.space <> prettyBranch pvar bh Pretty.<$>
-        case brest ^? _Snoc of
-          Nothing -> Pretty.char '}'
-          Just (bmiddle, blast) ->
-            foldMap
-              ((\x -> Pretty.char ';' <> Pretty.space <> x <> Pretty.line) .
-              prettyBranch pvar)
-              bmiddle <>
-            Pretty.char ';' <> Pretty.space <> prettyBranch pvar blast Pretty.<$>
-            Pretty.char '}')
+        [ Pretty.text "case"
+        , ( case a of
+              Case{} -> Pretty.parens
+              Lam{} -> Pretty.parens
+              Pi{} -> Pretty.parens
+              _ -> id
+          )
+            (prettyTerm pvar a)
+        , Pretty.text "of"
+        ]
+        Pretty.<$> Pretty.indent
+          2
+          ( Pretty.char '{' <> Pretty.space <> prettyBranch pvar bh
+              Pretty.<$> case brest ^? _Snoc of
+                Nothing -> Pretty.char '}'
+                Just (bmiddle, blast) ->
+                  foldMap
+                    ( (\x -> Pretty.char ';' <> Pretty.space <> x <> Pretty.line)
+                        . prettyBranch pvar
+                    )
+                    bmiddle
+                    <> Pretty.char ';'
+                    <> Pretty.space
+                    <> prettyBranch pvar blast
+                    Pretty.<$> Pretty.char '}'
+          )

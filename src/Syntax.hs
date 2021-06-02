@@ -1,29 +1,42 @@
-{-# language DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
-{-# language ExistentialQuantification #-}
-{-# language GADTs #-}
-{-# language StandaloneDeriving #-}
-{-# language TemplateHaskell #-}
-{-# language TypeOperators #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeOperators #-}
+
 module Syntax where
 
-import Bound.Class (Bound(..))
-import Bound.Name (Name(..), abstractName, abstract1Name)
-import Bound.Scope (Scope)
+import Bound.Class (Bound (..))
+import Bound.Scope (Scope, abstract, abstract1)
 import Control.Monad (ap)
 import Control.Monad.Trans.Class (lift)
 import Data.Deriving (deriveShow1)
-import Data.Functor.Classes (Eq1(..), Show1(..), eq1, showsPrec1)
+import Data.Functor.Classes (Eq1 (..), Show1 (..), eq1, showsPrec1)
 import Data.List (elemIndex)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (isJust)
-import Data.Semiring (Semiring(..))
-import Data.Type.Equality ((:~:)(..))
-import Text.PrettyPrint.ANSI.Leijen (Pretty(..))
+import Data.Semiring (Semiring (..))
+import Data.Type.Equality ((:~:) (..))
+import GHC.Exts (IsString)
+import Text.PrettyPrint.ANSI.Leijen (Pretty (..))
 
 import qualified Text.PrettyPrint.ANSI.Leijen as Pretty
 
 data Usage = Zero | One | Many
   deriving (Eq, Show)
+
+instance Ord Usage where
+  compare Zero Zero = EQ
+  compare Zero _ = LT
+  compare _ Zero = GT
+  compare One One = EQ
+  compare One _ = LT
+  compare _ One = GT
+  compare Many Many = EQ
 
 instance Pretty Usage where
   pretty Zero = Pretty.char '0'
@@ -39,7 +52,6 @@ instance Semiring Usage where
   plus One Many = Many
   plus Many _ = Many
 
-{-   maybe the semiring is wrong?
   one = One
 
   times Zero _ = Zero
@@ -47,15 +59,6 @@ instance Semiring Usage where
   times Many Zero = Zero
   times Many One = Many
   times Many Many = Many
--}
-
-  one = Many
-
-  times Zero _ = Zero
-  times One Zero = Zero
-  times One One = One
-  times One Many = One
-  times Many m = m
 
 data Pattern c p where
   PVar :: c -> Pattern c ()
@@ -78,8 +81,12 @@ pathVal :: Path p -> p
 pathVal V = ()
 pathVal (C n) = n
 
+pathArgName :: Pattern c p -> Path p -> c
+pathArgName (PVar c) V = c
+pathArgName (PCtor _ cs _) (C ix) = cs !! ix
+
 data Branch n f a
-  = forall p. Branch (Pattern n p) (Scope (Name n (Path p)) f a)
+  = forall p. Branch (Pattern n p) (Scope (Path p) f a)
   | forall p. BranchImpossible (Pattern n p)
 deriving instance Functor f => Functor (Branch n f)
 deriving instance Foldable f => Foldable (Branch n f)
@@ -100,14 +107,14 @@ instance (Monad f, Eq n, Eq1 f, Eq a) => Eq (Branch n f a) where
 instance (Show n, Show1 f) => Show1 (Branch n f) where
   liftShowsPrec sp sl d (Branch a b) =
     showParen (d > 10) $
-    showString "Branch " .
-    showsPrec 11 a .
-    showString " " .
-    liftShowsPrec sp sl 11 b
+      showString "Branch "
+        . showsPrec 11 a
+        . showString " "
+        . liftShowsPrec sp sl 11 b
   liftShowsPrec _ _ d (BranchImpossible a) =
     showParen (d > 10) $
-    showString "Branch " .
-    showsPrec 11 a
+      showString "Branch "
+        . showsPrec 11 a
 
 instance (Show n, Show1 f, Show a) => Show (Branch n f a) where
   showsPrec = showsPrec1
@@ -121,25 +128,19 @@ data Term n l a
   = Var a
   | Ann (Term n l a) Usage (Term n l a)
   | Type
-
-  | Lam n (Scope (Name n ()) (Term n l) a)
-  | Pi Usage (Maybe n) (Term n l a) (Scope (Name n ()) (Term n l) a)
+  | Lam n (Scope () (Term n l) a)
+  | Pi Usage n (Term n l a) (Scope () (Term n l) a)
   | App (Term n l a) (Term n l a)
-
   | MkTensor (Term n l a) (Term n l a)
-  | Tensor n (Term n l a) (Scope (Name n ()) (Term n l) a)
-  | UnpackTensor n n (Term n l a) (Scope (Name n Bool) (Term n l) a)
-
+  | Tensor n Usage (Term n l a) (Scope () (Term n l) a)
+  | UnpackTensor n n (Term n l a) (Scope Bool (Term n l) a)
   | MkWith (Term n l a) (Term n l a)
-  | With n (Term n l a) (Scope (Name n ()) (Term n l) a)
+  | With (Term n l a) (Term n l a)
   | Fst (Term n l a)
   | Snd (Term n l a)
-
   | Unit
   | MkUnit
-
   | Case (Term n l a) (NonEmpty (Branch n (Term n l) a))
-
   | Loc l (Term n l a)
   deriving (Functor, Foldable, Traversable)
 deriveShow1 ''Term
@@ -157,11 +158,11 @@ instance Eq1 (Term n l) where
     a == a' && liftEq f b b' && liftEq f c c'
   liftEq f (App a b) (App a' b') = liftEq f a a' && liftEq f b b'
   liftEq f (MkTensor a b) (MkTensor a' b') = liftEq f a a' && liftEq f b b'
-  liftEq f (Tensor _ a b) (Tensor _ a' b') = liftEq f a a' && liftEq f b b'
+  liftEq f (Tensor _ u a b) (Tensor _ u' a' b') = u == u' && liftEq f a a' && liftEq f b b'
   liftEq f (UnpackTensor _ _ a b) (UnpackTensor _ _ a' b') =
     liftEq f a a' && liftEq f b b'
   liftEq f (MkWith a b) (MkWith a' b') = liftEq f a a' && liftEq f b b'
-  liftEq f (With _ a b) (With _ a' b') = liftEq f a a' && liftEq f b b'
+  liftEq f (With a b) (With a' b') = liftEq f a a' && liftEq f b b'
   liftEq f (Fst a) (Fst a') = liftEq f a a'
   liftEq f (Snd a) (Snd a') = liftEq f a a'
   liftEq _ Unit Unit = True
@@ -173,7 +174,7 @@ instance Eq1 (Term n l) where
 instance Eq a => Eq (Term n l a) where
   (==) = eq1
 
-instance Applicative (Term n l) where; pure = return; (<*>) = ap
+instance Applicative (Term n l) where pure = return; (<*>) = ap
 instance Monad (Term n l) where
   return = Var
 
@@ -182,74 +183,69 @@ instance Monad (Term n l) where
       Var a -> f a
       Ann a b c -> Ann (a >>= f) b (c >>= f)
       Type -> Type
-
       Lam n a -> Lam n (a >>>= f)
       Pi a n b c -> Pi a n (b >>= f) (c >>>= f)
       App a b -> App (a >>= f) (b >>= f)
-
       MkTensor a b -> MkTensor (a >>= f) (b >>= f)
-      Tensor n a b -> Tensor n (a >>= f) (b >>>= f)
+      Tensor n u a b -> Tensor n u (a >>= f) (b >>>= f)
       UnpackTensor n1 n2 a b -> UnpackTensor n1 n2 (a >>= f) (b >>>= f)
-
       MkWith a b -> MkWith (a >>= f) (b >>= f)
-      With n a b -> With n (a >>= f) (b >>>= f)
+      With a b -> With (a >>= f) (b >>= f)
       Fst a -> Fst (a >>= f)
       Snd a -> Snd (a >>= f)
-
       Unit -> Unit
       MkUnit -> MkUnit
-
       Case a b -> Case (a >>= f) (fmap (>>>= f) b)
-
       Loc a b -> Loc a (b >>= f)
 
 unfoldApps :: Term n l a -> (Term n l a, [Term n l a])
 unfoldApps = go []
-  where
-    go as (App a b) = go (b:as) a
-    go as a = (a, as)
+ where
+  go as (App a b) = go (b : as) a
+  go as a = (a, as)
 
 lam :: Eq a => a -> Term a l a -> Term a l a
-lam a = Lam a . abstract1Name a
+lam a = Lam a . abstract1 a
 
 pi :: Eq a => (a, Ty a l a) -> Term a l a -> Term a l a
-pi (a, ty) = Pi Many (Just a) ty . abstract1Name a
+pi (a, ty) = Pi Many a ty . abstract1 a
 
 lpi :: Eq a => (a, Ty a l a) -> Term a l a -> Term a l a
-lpi (a, ty) = Pi One (Just a) ty . abstract1Name a
+lpi (a, ty) = Pi One a ty . abstract1 a
 
 forall_ :: Eq a => (a, Ty a l a) -> Term a l a -> Term a l a
-forall_ (a, ty) = Pi Zero (Just a) ty . abstract1Name a
+forall_ (a, ty) = Pi Zero a ty . abstract1 a
 
-arr :: Term n l a -> Term n l a -> Term n l a
-arr a b = Pi Many Nothing a $ lift b
+arr :: IsString n => Term n l a -> Term n l a -> Term n l a
+arr a b = Pi Many "_" a $ lift b
 
-limp :: Term n l a -> Term n l a -> Term n l a
-limp a b = Pi One Nothing a $ lift b
+limp :: IsString n => Term n l a -> Term n l a -> Term n l a
+limp a b = Pi One "_" a $ lift b
 
-tensor :: Eq a => (a, Ty a l a) -> Ty a l a -> Ty a l a
-tensor (a, ty) = Tensor a ty . abstract1Name a
+tensor :: Eq a => (a, Usage, Ty a l a) -> Ty a l a -> Ty a l a
+tensor (a, u, ty) = Tensor a u ty . abstract1 a
 
-with :: Eq a => (a, Ty a l a) -> Ty a l a -> Ty a l a
-with (a, ty) = With a ty . abstract1Name a
+with :: Ty a l a -> Ty a l a -> Ty a l a
+with = With
 
 unpackTensor :: Eq a => (a, a) -> Term a l a -> Term a l a -> Term a l a
 unpackTensor (x, y) m n =
   UnpackTensor x y m $
-  abstractName
-    (\z ->
-       if z == x
-       then Just False
-       else if z == y then Just True else Nothing)
-    n
+    abstract
+      ( \z ->
+          if z == x
+            then Just False
+            else if z == y then Just True else Nothing
+      )
+      n
 
 varb :: (Eq a, Monad f) => a -> f a -> Branch a f a
-varb a = Branch (PVar a) . abstractName (\x -> if x == a then Just V else Nothing)
+varb a = Branch (PVar a) . abstract (\x -> if x == a then Just V else Nothing)
 
 ctorb :: (Eq a, Monad f) => a -> [a] -> f a -> Branch a f a
-ctorb a b = Branch (PCtor a b bl) . abstractName (fmap C . (`elemIndex` b))
-  where
-    bl = length b
+ctorb a b = Branch (PCtor a b bl) . abstract (fmap C . (`elemIndex` b))
+ where
+  bl = length b
 
 varb_imp :: a -> Branch a f a
 varb_imp a = BranchImpossible (PVar a)

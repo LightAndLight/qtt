@@ -8,6 +8,7 @@ data TypeError l a
   = NotInScope a
   | UsingErased a
   | UnusedLinear a
+  | OverusedLinear a
   | ExpectedType (Term a l a)
   | ExpectedPi (Term a l a)
   | ExpectedTensor (Term a l a)
